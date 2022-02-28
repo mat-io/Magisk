@@ -4,7 +4,6 @@
 - [Frequently Asked Questions](faq.md)
 - [Release Notes](releases/index.md)
 - [Magisk Changelog](changes.md)
-- [Magisk Manager Changelog](app_changes.md)
 
 The following sections are for developers
 
@@ -12,4 +11,3 @@ The following sections are for developers
 - [Magisk Tools](tools.md)
 - [Internal Details](details.md)
 - [Android Booting Shenanigans](boot.md)
-- [Deployment](deploy.md)

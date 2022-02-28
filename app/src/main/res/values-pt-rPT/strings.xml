@@ -9,8 +9,6 @@
     <string name="install">Instalar</string>
 
     <!--Status Fragment-->
-    <string name="safetynet_api_error">Erro na API SafetyNet</string>
-    <string name="safetynet_res_invalid">A resposta é inválida</string>
 
     <!--Install Fragment-->
     <string name="keep_force_encryption">Manter encriptação forçada</string>
@@ -34,34 +32,24 @@
     <string name="app_changelog">Lista de alterações da aplicação</string>
 
     <!--Toasts, Dialogs-->
-    <string name="repo_install_title">Instalar %1$s</string>
-    <string name="repo_install_msg">Deseja instalar%1$s agora?</string>
+    <string name="repo_install_title">Instalar %1$s %2$s(%3$d)</string>
     <string name="download">Transferir</string>
     <string name="reboot">Reiniciar</string>
     <string name="magisk_update_title">Nova atualização do Magisk disponível!</string>
     <string name="release_notes">Notas da atualização</string>
-    <string name="repo_cache_cleared">Cache do repositório apagado</string>
-    <string name="manager_update_title">Nova atualização do Magisk Manager disponível!</string>
     <string name="manager_download_install">Pressione para transferir e instalar</string>
     <string name="update_channel">Atualizações do Magisk</string>
     <string name="flashing">A instalar</string>
-    <string name="hide_manager_title">A esconder Magisk Manager…</string>
-    <string name="hide_manager_fail_toast">Falha ao esconder Magisk Manager…</string>
-    <string name="download_zip_only">Transferir Apenas Ficheiro Zip</string>
     <string name="direct_install">Instalar Diretamente (Recomendado)</string>
     <string name="complete_uninstall">Desinstalação Completa</string>
     <string name="restore_done">Restauração feita!</string>
     <string name="download_file_error">Erro ao transferir ficheiro</string>
 
     <!--Settings Activity -->
-    <string name="settings_clear_cache_title">Apagar Cache de Repositório</string>
-    <string name="settings_clear_cache_summary">Apaga a informação cache de repositórios online. online, forçando a aplicação a atualizar online</string>
-    <string name="settings_hide_manager_title">Esconder Magisk Manager</string>
     <string name="language">Língua</string>
     <string name="system_default">(Padrão do Sistema)</string>
     <string name="settings_update_stable">Estável</string>
     <string name="settings_update_beta">Beta</string>
-    <string name="settings_magiskhide_summary">Oculta Magisk de várias deteções</string>
     <string name="settings_hosts_title">Ativar systemless hosts</string>
     <string name="settings_hosts_summary">Suporte de systemless para aplicações Adblock</string>
 

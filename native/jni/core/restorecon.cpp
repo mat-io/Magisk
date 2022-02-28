@@ -18,10 +18,11 @@ static void restore_syscon(int dirfd) {
     DIR *dir;
     char *con;
 
-    fgetfilecon(dirfd, &con);
-    if (strlen(con) == 0 || strcmp(con, UNLABEL_CON) == 0)
-        fsetfilecon(dirfd, SYSTEM_CON);
-    freecon(con);
+    if (fgetfilecon(dirfd, &con) >= 0) {
+        if (strlen(con) == 0 || strcmp(con, UNLABEL_CON) == 0 || strcmp(con, ADB_CON) == 0)
+            fsetfilecon(dirfd, SYSTEM_CON);
+        freecon(con);
+    }
 
     dir = xfdopendir(dirfd);
     while ((entry = xreaddir(dir))) {
@@ -29,13 +30,14 @@ static void restore_syscon(int dirfd) {
         if (entry->d_type == DT_DIR) {
             restore_syscon(fd);
         } else if (entry->d_type == DT_REG) {
-            fgetfilecon(fd, &con);
-            if (con[0] == '\0' || strcmp(con, UNLABEL_CON) == 0)
-                fsetfilecon(fd, SYSTEM_CON);
-            freecon(con);
+            if (fgetfilecon(fd, &con) >= 0) {
+                if (con[0] == '\0' || strcmp(con, UNLABEL_CON) == 0 || strcmp(con, ADB_CON) == 0)
+                    fsetfilecon(fd, SYSTEM_CON);
+                freecon(con);
+            }
         } else if (entry->d_type == DT_LNK) {
             getfilecon_at(dirfd, entry->d_name, &con);
-            if (con[0] == '\0' || strcmp(con, UNLABEL_CON) == 0)
+            if (con[0] == '\0' || strcmp(con, UNLABEL_CON) == 0 || strcmp(con, ADB_CON) == 0)
                 setfilecon_at(dirfd, entry->d_name, con);
             freecon(con);
         }
@@ -93,10 +95,11 @@ void restore_tmpcon() {
     auto dir = xopen_dir(MAGISKTMP.data());
     int dfd = dirfd(dir.get());
 
-    for (dirent *entry; (entry = xreaddir(dir.get()));) {
-        if (SDK_INT >= 26 && entry->d_name == "magisk"sv)
-            setfilecon_at(dfd, entry->d_name, EXEC_CON);
-        else
-            setfilecon_at(dfd, entry->d_name, SYSTEM_CON);
+    for (dirent *entry; (entry = xreaddir(dir.get()));)
+        setfilecon_at(dfd, entry->d_name, SYSTEM_CON);
+
+    if (SDK_INT >= 26) {
+        string magisk = MAGISKTMP + "/magisk";
+        setfilecon(magisk.data(), EXEC_CON);
     }
 }

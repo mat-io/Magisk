@@ -6,29 +6,13 @@ import kotlinx.parcelize.Parcelize
 
 @JsonClass(generateAdapter = true)
 data class UpdateInfo(
-    val app: ManagerJson = ManagerJson(),
-    val uninstaller: UninstallerJson = UninstallerJson(),
     val magisk: MagiskJson = MagiskJson(),
     val stub: StubJson = StubJson()
 )
 
-@JsonClass(generateAdapter = true)
-data class UninstallerJson(
-    val link: String = ""
-)
-
-@JsonClass(generateAdapter = true)
-data class MagiskJson(
-    val version: String = "",
-    val versionCode: Int = -1,
-    val link: String = "",
-    val note: String = "",
-    val md5: String = ""
-)
-
 @Parcelize
 @JsonClass(generateAdapter = true)
-data class ManagerJson(
+data class MagiskJson(
     val version: String = "",
     val versionCode: Int = -1,
     val link: String = "",
@@ -44,18 +28,10 @@ data class StubJson(
 
 @JsonClass(generateAdapter = true)
 data class ModuleJson(
-    val id: String,
-    val last_update: Long,
-    val prop_url: String,
-    val zip_url: String,
-    val notes_url: String
-)
-
-@JsonClass(generateAdapter = true)
-data class RepoJson(
-    val name: String,
-    val last_update: Long,
-    val modules: List<ModuleJson>
+    val version: String,
+    val versionCode: Int,
+    val zipUrl: String,
+    val changelog: String,
 )
 
 @JsonClass(generateAdapter = true)

@@ -1,109 +1,89 @@
 package com.topjohnwu.magisk.core.download
 
+import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Parcelable
+import androidx.core.net.toFile
 import androidx.core.net.toUri
 import com.topjohnwu.magisk.core.Info
 import com.topjohnwu.magisk.core.model.MagiskJson
-import com.topjohnwu.magisk.core.model.ManagerJson
 import com.topjohnwu.magisk.core.model.StubJson
 import com.topjohnwu.magisk.core.model.module.OnlineModule
 import com.topjohnwu.magisk.core.utils.MediaStoreUtils
+import com.topjohnwu.magisk.di.AppContext
 import com.topjohnwu.magisk.ktx.cachedFile
-import com.topjohnwu.magisk.ktx.get
+import com.topjohnwu.magisk.ui.flash.FlashFragment
+import com.topjohnwu.magisk.utils.APKInstall
+import com.topjohnwu.magisk.view.Notifications
 import kotlinx.parcelize.IgnoredOnParcel
 import kotlinx.parcelize.Parcelize
 
-private fun cachedFile(name: String) = get<Context>().cachedFile(name).apply { delete() }.toUri()
+private fun cachedFile(name: String) = AppContext.cachedFile(name).apply { delete() }.toUri()
+
+enum class Action {
+    Flash,
+    Download
+}
 
 sealed class Subject : Parcelable {
 
     abstract val url: String
     abstract val file: Uri
-    abstract val action: Action
     abstract val title: String
+    abstract val notifyId: Int
+    open val autoStart: Boolean get() = true
+
+    abstract fun pendingIntent(context: Context): PendingIntent
 
     @Parcelize
     class Module(
         val module: OnlineModule,
-        override val action: Action
+        val action: Action,
+        override val notifyId: Int = Notifications.nextId()
     ) : Subject() {
-        override val url: String get() = module.zip_url
+        override val url: String get() = module.zipUrl
         override val title: String get() = module.downloadFilename
+        override val autoStart: Boolean get() = action == Action.Flash
 
         @IgnoredOnParcel
         override val file by lazy {
             MediaStoreUtils.getFile(title).uri
         }
+
+        override fun pendingIntent(context: Context) =
+            FlashFragment.installIntent(context, file)
     }
 
     @Parcelize
     class Manager(
-        private val app: ManagerJson = Info.remote.app,
-        val stub: StubJson = Info.remote.stub
+        private val json: MagiskJson = Info.remote.magisk,
+        val stub: StubJson = Info.remote.stub,
+        override val notifyId: Int = Notifications.nextId()
     ) : Subject() {
-        override val action get() = Action.Download
-        override val title: String get() = "MagiskManager-${app.version}(${app.versionCode})"
-        override val url: String get() = app.link
+        override val title: String get() = "Magisk-${json.version}(${json.versionCode})"
+        override val url: String get() = json.link
 
         @IgnoredOnParcel
         override val file by lazy {
             cachedFile("manager.apk")
         }
 
+        val externalFile get() = MediaStoreUtils.getFile("$title.apk").uri
+
+        override fun pendingIntent(context: Context): PendingIntent {
+            val receiver = APKInstall.register(context, null, null)
+            APKInstall.installapk(context, file.toFile())
+            val intent = receiver.waitIntent() ?: Intent()
+            return intent.toPending(context)
+        }
     }
 
-    abstract class Magisk : Subject() {
-
-        val magisk: MagiskJson = Info.remote.magisk
-
-        @Parcelize
-        private class Internal(
-            override val action: Action
-        ) : Magisk() {
-            override val url: String get() = magisk.link
-            override val title: String get() = "Magisk-${magisk.version}(${magisk.versionCode})"
-
-            @IgnoredOnParcel
-            override val file by lazy {
-                cachedFile("magisk.zip")
-            }
-        }
-
-        @Parcelize
-        private class Uninstall : Magisk() {
-            override val action get() = Action.Uninstall
-            override val url: String get() = Info.remote.uninstaller.link
-            override val title: String get() = "uninstall.zip"
-
-            @IgnoredOnParcel
-            override val file by lazy {
-                cachedFile(title)
-            }
-
-        }
-
-        @Parcelize
-        private class Download : Magisk() {
-            override val action get() = Action.Download
-            override val url: String get() = magisk.link
-            override val title: String get() = "Magisk-${magisk.version}(${magisk.versionCode}).zip"
-
-            @IgnoredOnParcel
-            override val file by lazy {
-                MediaStoreUtils.getFile(title).uri
-            }
-        }
-
-        companion object {
-            operator fun invoke(config: Action) = when (config) {
-                Action.Download -> Download()
-                Action.Uninstall -> Uninstall()
-                Action.EnvFix, is Action.Flash, is Action.Patch -> Internal(config)
-            }
-        }
-
+    @SuppressLint("InlinedApi")
+    protected fun Intent.toPending(context: Context): PendingIntent {
+        return PendingIntent.getActivity(context, notifyId, this,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
     }
-
 }

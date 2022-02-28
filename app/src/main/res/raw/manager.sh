@@ -1,5 +1,5 @@
 ##################################
-# Magisk Manager internal scripts
+# Magisk app internal scripts
 ##################################
 
 run_delay() {
@@ -7,27 +7,43 @@ run_delay() {
 }
 
 env_check() {
-  for file in busybox magisk magiskboot magiskinit util_functions.sh boot_patch.sh; do
+  for file in busybox magiskboot magiskinit util_functions.sh boot_patch.sh; do
     [ -f $MAGISKBIN/$file ] || return 1
   done
+  grep -xqF "MAGISK_VER='$1'" "$MAGISKBIN/util_functions.sh" || return 1
+  grep -xqF "MAGISK_VER_CODE=$2" "$MAGISKBIN/util_functions.sh" || return 1
   return 0
 }
 
-fix_env() {
-  cd $MAGISKBIN
-  PATH=/system/bin /system/bin/sh update-binary -x
-  ./busybox rm -f update-binary magisk.apk
-  ./busybox chmod -R 755 .
-  ./magiskinit -x magisk magisk
+cp_readlink() {
+  if [ -z $2 ]; then
+    cd $1
+  else
+    cp -af $1/. $2
+    cd $2
+  fi
+  for file in *; do
+    if [ -L $file ]; then
+      local full=$(readlink -f $file)
+      rm $file
+      cp -af $full $file
+    fi
+  done
+  chmod -R 755 .
   cd /
 }
 
-direct_install() {
-  rm -rf $MAGISKBIN/* 2>/dev/null
+fix_env() {
+  # Cleanup and make dirs
+  rm -rf $MAGISKBIN/*
   mkdir -p $MAGISKBIN 2>/dev/null
   chmod 700 $NVBASE
-  cp -af $1/. $MAGISKBIN
-  rm -f $MAGISKBIN/new-boot.img
+  cp_readlink $1 $MAGISKBIN
+  rm -rf $1
+  chown -R 0:0 $MAGISKBIN
+}
+
+direct_install() {
   echo "- Flashing new boot image"
   flash_image $1/new-boot.img $2
   case $? in
@@ -40,8 +56,20 @@ direct_install() {
       return 2
       ;;
   esac
-  rm -rf $1
+
+  rm -f $1/new-boot.img
+  fix_env $1
+  run_migrations
+  copy_sepolicy_rules
+
   return 0
+}
+
+run_uninstaller() {
+  rm -rf /dev/tmp
+  mkdir -p /dev/tmp/install
+  unzip -o "$1" "assets/*" "lib/*" -d /dev/tmp/install
+  INSTALLER=/dev/tmp/install sh /dev/tmp/install/assets/uninstaller.sh dummy 1 "$1"
 }
 
 restore_imgs() {
@@ -63,15 +91,17 @@ restore_imgs() {
 }
 
 post_ota() {
-  cd $1
+  cd $NVBASE
+  cp -f $1 bootctl
+  rm -f $1
   chmod 755 bootctl
   ./bootctl hal-info || return
   [ $(./bootctl get-current-slot) -eq 0 ] && SLOT_NUM=1 || SLOT_NUM=0
   ./bootctl set-active-boot-slot $SLOT_NUM
   cat << EOF > post-fs-data.d/post_ota.sh
-${1}/bootctl mark-boot-successful
-rm -f ${1}/bootctl
-rm -f ${1}/post-fs-data.d/post_ota.sh
+/data/adb/bootctl mark-boot-successful
+rm -f /data/adb/bootctl
+rm -f /data/adb/post-fs-data.d/post_ota.sh
 EOF
   chmod 755 post-fs-data.d/post_ota.sh
   cd /
@@ -87,8 +117,8 @@ id=hosts
 name=Systemless Hosts
 version=1.0
 versionCode=1
-author=Magisk Manager
-description=Magisk Manager built-in systemless hosts module
+author=Magisk
+description=Magisk app built-in systemless hosts module
 EOF
   magisk --clone /system/etc/hosts hosts/system/etc/hosts
   touch hosts/update
@@ -99,9 +129,11 @@ adb_pm_install() {
   local tmp=/data/local/tmp/temp.apk
   cp -f "$1" $tmp
   chmod 644 $tmp
-  su 2000 -c pm install $tmp || pm install $tmp
+  su 2000 -c pm install $tmp || pm install $tmp || su 1000 -c pm install $tmp
   local res=$?
   rm -f $tmp
+  # Note: change this will kill self
+  [ $res != 0 ] && appops set "$2" REQUEST_INSTALL_PACKAGES allow
   return $res
 }
 
@@ -161,6 +193,14 @@ get_flags() {
   KEEPVERITY=$SYSTEM_ROOT
   [ "$(getprop ro.crypto.state)" = "encrypted" ] && ISENCRYPTED=true || ISENCRYPTED=false
   KEEPFORCEENCRYPT=$ISENCRYPTED
+  # Although this most certainly won't work without root, keep it just in case
+  if [ -e /dev/block/by-name/vbmeta_a ] || [ -e /dev/block/by-name/vbmeta ]; then
+    VBMETAEXIST=true
+  else
+    VBMETAEXIST=false
+  fi
+  # Preset PATCHVBMETAFLAG to false in the non-root case
+  PATCHVBMETAFLAG=false
   # Do NOT preset RECOVERYMODE here
 }
 
@@ -172,8 +212,7 @@ grep_prop() { return; }
 # Initialize
 #############
 
-mm_init() {
-  export BOOTMODE=true
+app_init() {
   mount_partitions
   get_flags
   run_migrations
@@ -183,3 +222,5 @@ mm_init() {
   # Make sure RECOVERYMODE has value
   [ -z $RECOVERYMODE ] && RECOVERYMODE=false
 }
+
+export BOOTMODE=true

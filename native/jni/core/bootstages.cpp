@@ -18,14 +18,15 @@
 using namespace std;
 
 static bool safe_mode = false;
+bool zygisk_enabled = false;
 
 /*********
  * Setup *
  *********/
 
-#define MNT_DIR_IS(dir)   (me->mnt_dir == string_view(dir))
-#define SETMIR(b, part)   sprintf(b, "%s/" MIRRDIR "/" #part, MAGISKTMP.data())
-#define SETBLK(b, part)   sprintf(b, "%s/" BLOCKDIR "/" #part, MAGISKTMP.data())
+#define MNT_DIR_IS(dir) (me->mnt_dir == string_view(dir))
+#define SETMIR(b, part) snprintf(b, sizeof(b), "%s/" MIRRDIR "/" #part, MAGISKTMP.data())
+#define SETBLK(b, part) snprintf(b, sizeof(b), "%s/" BLOCKDIR "/" #part, MAGISKTMP.data())
 
 #define do_mount_mirror(part, flag) {\
     SETMIR(buf1, part); \
@@ -38,7 +39,7 @@ static bool safe_mode = false;
 }
 
 #define mount_mirror(part, flag) \
-else if (MNT_DIR_IS("/" #part) && me->mnt_type != "tmpfs"sv && lstat(me->mnt_dir, &st) == 0) \
+else if (MNT_DIR_IS("/" #part) && me->mnt_type != "tmpfs"sv && me->mnt_type != "overlay"sv && lstat(me->mnt_dir, &st) == 0) \
     do_mount_mirror(part, flag)
 
 #define link_mirror(part) \
@@ -49,7 +50,7 @@ if (access("/system/" #part, F_OK) == 0 && access(buf1, F_OK) != 0) { \
 }
 
 #define link_orig_dir(dir, part) \
-else if (MNT_DIR_IS(dir) && me->mnt_type != "tmpfs"sv) { \
+else if (MNT_DIR_IS(dir) && me->mnt_type != "tmpfs"sv && me->mnt_type != "overlay"sv) { \
     SETMIR(buf1, part); \
     rmdir(buf1); \
     xsymlink(dir, buf1); \
@@ -99,22 +100,16 @@ static void mount_mirrors() {
     link_mirror(system_ext)
 }
 
-constexpr char bb_script[] = R"EOF(
-#!/system/bin/sh
-BB=%s
-[ -x $BB ] && exec $BB "$@"
-exec /data/adb/magisk/busybox.bin "$@"
-)EOF";
-
 static bool magisk_env() {
     char buf[4096];
 
     LOGI("* Initializing Magisk environment\n");
 
     string pkg;
-    check_manager(&pkg);
+    get_manager(&pkg);
 
-    sprintf(buf, "%s/0/%s/install", APP_DATA_DIR, pkg.data());
+    sprintf(buf, "%s/0/%s/install", APP_DATA_DIR,
+            pkg.empty() ? "xxx" /* Ensure non-exist path */ : pkg.data());
 
     // Alternative binaries paths
     const char *alt_bin[] = { "/cache/data_adb/magisk", "/data/magisk", buf };
@@ -147,26 +142,12 @@ static bool magisk_env() {
     xmkdir(SECURE_DIR "/post-fs-data.d", 0755);
     xmkdir(SECURE_DIR "/service.d", 0755);
 
-    // Disable/remove magiskhide, resetprop
-    if (SDK_INT < 19) {
-        unlink("/sbin/resetprop");
-        unlink("/sbin/magiskhide");
-    }
-
-    if (access(DATABIN "/busybox.bin", X_OK)) {
-        if (access(DATABIN "/busybox", X_OK))
-            return false;
-        rename(DATABIN "/busybox", DATABIN "/busybox.bin");
-    }
+    if (access(DATABIN "/busybox", X_OK))
+        return false;
 
     sprintf(buf, "%s/" BBPATH "/busybox", MAGISKTMP.data());
-    {
-        auto fp = open_file(DATABIN "/busybox", "we");
-        fprintf(fp.get(), bb_script, buf);
-    }
-    chmod(DATABIN "/busybox", 0755);
     mkdir(dirname(buf), 0755);
-    cp_afc(DATABIN "/busybox.bin", buf);
+    cp_afc(DATABIN "/busybox", buf);
     exec_command_async(buf, "--install", "-s", dirname(buf));
 
     return true;
@@ -304,7 +285,7 @@ void post_fs_data(int client) {
         } else {
             // If the folder is not automatically created by Android,
             // do NOT proceed further. Manual creation of the folder
-            // will cause bootloops on FBE devices.
+            // will have no encryption flag, which will cause bootloops on FBE devices.
             LOGE(SECURE_DIR " is not present, abort\n");
             goto early_abort;
         }
@@ -317,12 +298,15 @@ void post_fs_data(int client) {
 
     if (getprop("persist.sys.safemode", true) == "1") {
         safe_mode = true;
-        // Disable all modules and magiskhide so next boot will be clean
+        // Disable all modules and denylist so next boot will be clean
         disable_modules();
-        stop_magiskhide();
+        disable_deny();
     } else {
         exec_common_scripts("post-fs-data");
-        auto_start_magiskhide(false);
+        db_settings dbs;
+        get_db_settings(dbs, ZYGISK_CONFIG);
+        zygisk_enabled = dbs[ZYGISK_CONFIG];
+        initialize_denylist();
         handle_modules();
     }
 
@@ -371,9 +355,7 @@ void boot_complete(int client) {
     if (access(SECURE_DIR, F_OK) != 0)
         xmkdir(SECURE_DIR, 0700);
 
-    auto_start_magiskhide(true);
-
-    if (!check_manager()) {
+    if (!get_manager()) {
         if (access(MANAGERAPK, F_OK) == 0) {
             // Only try to install APK when no manager is installed
             // Magisk Manager should be upgraded by itself, not through recovery installs

@@ -6,15 +6,10 @@
 #include <vector>
 
 #include <xz.h>
+
 #include <magisk.hpp>
 #include <utils.hpp>
-
-#include "binaries.h"
-#ifdef USE_64BIT
-#include "binaries_arch64.h"
-#else
-#include "binaries_arch.h"
-#endif
+#include <binaries.h>
 
 #include "init.hpp"
 
@@ -26,7 +21,7 @@ using namespace std;
 constexpr int (*init_applet_main[])(int, char *[]) =
         { magiskpolicy_main, magiskpolicy_main, nullptr };
 
-static bool unxz(int fd, const uint8_t *buf, size_t size) {
+bool unxz(int fd, const uint8_t *buf, size_t size) {
     uint8_t out[8192];
     xz_crc32_init();
     struct xz_dec *dec = xz_dec_init(XZ_DYNALLOC, 1 << 26);
@@ -49,16 +44,6 @@ static bool unxz(int fd, const uint8_t *buf, size_t size) {
     return true;
 }
 
-int dump_magisk(const char *path, mode_t mode) {
-    int fd = xopen(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
-    if (fd < 0)
-        return 1;
-    if (!unxz(fd, magisk_xz, sizeof(magisk_xz)))
-        return 1;
-    close(fd);
-    return 0;
-}
-
 static int dump_manager(const char *path, mode_t mode) {
     int fd = xopen(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
     if (fd < 0)
@@ -71,10 +56,10 @@ static int dump_manager(const char *path, mode_t mode) {
 
 class RecoveryInit : public BaseInit {
 public:
-    RecoveryInit(char *argv[], cmdline *cmd) : BaseInit(argv, cmd) {}
+    RecoveryInit(char *argv[], BootConfig *cmd) : BaseInit(argv, cmd) {}
     void start() override {
         LOGD("Ramdisk is recovery, abort\n");
-        rename("/.backup/init", "/init");
+        rename(backup_init(), "/init");
         rm_rf("/.backup");
         exec_init();
     }
@@ -83,7 +68,7 @@ public:
 #if ENABLE_TEST
 class TestInit : public BaseInit {
 public:
-    TestInit(char *argv[], cmdline *cmd) : BaseInit(argv, cmd) {};
+    TestInit(char *argv[], BootConfig *cmd) : BaseInit(argv, cmd) {};
     void start() override {
         // Place init tests here
     }
@@ -147,37 +132,34 @@ int main(int argc, char *argv[]) {
 #endif
 
     if (argc > 1 && argv[1] == "-x"sv) {
-        if (argv[2] == "magisk"sv)
-            return dump_magisk(argv[3], 0755);
-        else if (argv[2] == "manager"sv)
+        if (argc > 2 && argv[2] == "manager"sv)
             return dump_manager(argv[3], 0644);
+        return 1;
     }
 
     if (getpid() != 1)
         return 1;
 
     BaseInit *init;
-    cmdline cmd{};
+    BootConfig config{};
 
     if (argc > 1 && argv[1] == "selinux_setup"sv) {
         setup_klog();
         init = new SecondStageInit(argv);
     } else {
         // This will also mount /sys and /proc
-        load_kernel_info(&cmd);
+        load_kernel_info(&config);
 
-        if (cmd.skip_initramfs) {
-            init = new SARInit(argv, &cmd);
-        } else {
-            if (cmd.force_normal_boot)
-                init = new FirstStageInit(argv, &cmd);
-            else if (access("/sbin/recovery", F_OK) == 0 || access("/system/bin/recovery", F_OK) == 0)
-                init = new RecoveryInit(argv, &cmd);
-            else if (check_two_stage())
-                init = new FirstStageInit(argv, &cmd);
-            else
-                init = new RootFSInit(argv, &cmd);
-        }
+        if (config.skip_initramfs)
+            init = new SARInit(argv, &config);
+        else if (config.force_normal_boot)
+            init = new FirstStageInit(argv, &config);
+        else if (access("/sbin/recovery", F_OK) == 0 || access("/system/bin/recovery", F_OK) == 0)
+            init = new RecoveryInit(argv, &config);
+        else if (check_two_stage())
+            init = new FirstStageInit(argv, &config);
+        else
+            init = new RootFSInit(argv, &config);
     }
 
     // Run the main routine

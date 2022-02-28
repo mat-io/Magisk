@@ -1,31 +1,32 @@
 #include <utils.hpp>
+#include <vector>
 #include <magiskpolicy.hpp>
 
 #include "sepolicy.hpp"
 
-using namespace std::literals;
+using namespace std;
 
 [[noreturn]] static void usage(char *arg0) {
     fprintf(stderr,
-R"EOF(MagiskPolicy - Sepolicy Patch Tool
+R"EOF(MagiskPolicy - SELinux Policy Patch Tool
 
 Usage: %s [--options...] [policy statements...]
 
 Options:
    --help            show help message for policy statements
-   --load FILE       load policies from FILE
+   --load FILE       load monolithic sepolicy from FILE
    --load-split      load from precompiled sepolicy or compile
-                     split policies
+                     split cil policies
    --compile-split   compile split cil policies
-   --save FILE       save policies to FILE
-   --live            directly apply sepolicy live
-   --magisk          inject built-in rules for a minimal
-                     Magisk selinux environment
+   --save FILE       dump monolithic sepolicy to FILE
+   --live            immediately load sepolicy into the kernel
+   --magisk          apply built-in Magisk sepolicy rules
    --apply FILE      apply rules from FILE, read and parsed
                      line by line as policy statements
+                     (multiple --apply are allowed)
 
-If neither --load or --compile-split is specified, it will load
-from current live policies (/sys/fs/selinux/policy)
+If neither --load, --load-split, nor --compile-split is specified,
+it will load from current live policies (/sys/fs/selinux/policy)
 
 )EOF", arg0);
     exit(1);
@@ -34,7 +35,7 @@ from current live policies (/sys/fs/selinux/policy)
 int magiskpolicy_main(int argc, char *argv[]) {
     cmdline_logging();
     const char *out_file = nullptr;
-    const char *rule_file = nullptr;
+    vector<string_view> rule_files;
     sepolicy *sepol = nullptr;
     bool magisk = false;
     bool live = false;
@@ -78,7 +79,7 @@ int magiskpolicy_main(int argc, char *argv[]) {
             } else if (option == "apply"sv) {
                 if (argv[i + 1] == nullptr)
                     usage(argv[0]);
-                rule_file = argv[i + 1];
+                rule_files.emplace_back(argv[i + 1]);
                 ++i;
             } else if (option == "help"sv) {
                 statement_help();
@@ -99,8 +100,9 @@ int magiskpolicy_main(int argc, char *argv[]) {
     if (magisk)
         sepol->magisk_rules();
 
-    if (rule_file)
-        sepol->load_rule_file(rule_file);
+    if (!rule_files.empty())
+        for (const auto &rule_file : rule_files)
+            sepol->load_rule_file(rule_file.data());
 
     for (; i < argc; ++i)
         sepol->parse_statement(argv[i]);

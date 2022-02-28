@@ -1,26 +1,26 @@
 package com.topjohnwu.magisk.core.tasks
 
-import android.app.ProgressDialog
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.os.Build.VERSION.SDK_INT
 import android.widget.Toast
 import com.topjohnwu.magisk.BuildConfig.APPLICATION_ID
 import com.topjohnwu.magisk.DynAPK
 import com.topjohnwu.magisk.R
-import com.topjohnwu.magisk.core.*
+import com.topjohnwu.magisk.core.Config
+import com.topjohnwu.magisk.core.Const
+import com.topjohnwu.magisk.core.Info
+import com.topjohnwu.magisk.core.Provider
 import com.topjohnwu.magisk.core.utils.AXML
 import com.topjohnwu.magisk.core.utils.Keygen
-import com.topjohnwu.magisk.data.repository.NetworkService
-import com.topjohnwu.magisk.ktx.inject
+import com.topjohnwu.magisk.di.ServiceLocator
 import com.topjohnwu.magisk.ktx.writeTo
+import com.topjohnwu.magisk.signing.JarMap
+import com.topjohnwu.magisk.signing.SignApk
+import com.topjohnwu.magisk.utils.APKInstall
 import com.topjohnwu.magisk.utils.Utils
-import com.topjohnwu.signing.JarMap
-import com.topjohnwu.signing.SignApk
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -32,15 +32,13 @@ object HideAPK {
 
     private const val ALPHA = "abcdefghijklmnopqrstuvwxyz"
     private const val ALPHADOTS = "$ALPHA....."
-    private const val APP_NAME = "Magisk Manager"
+    private const val APP_NAME = "Magisk"
     private const val ANDROID_MANIFEST = "AndroidManifest.xml"
 
     // Some arbitrary limit
     const val MAX_LABEL_LENGTH = 32
 
-    private val svc: NetworkService by inject()
-    private val Context.APK_URI get() = Provider.APK_URI(packageName)
-    private val Context.PREFS_URI get() = Provider.PREFS_URI(packageName)
+    private val svc get() = ServiceLocator.networkService
 
     private fun genPackageName(): String {
         val random = SecureRandom()
@@ -49,7 +47,7 @@ object HideAPK {
         var next: Char
         var prev = 0.toChar()
         for (i in 0 until len) {
-            next = if (prev == '.' || prev == 0.toChar() || i == len - 1) {
+            next = if (prev == '.' || i == 0 || i == len - 1) {
                 ALPHA[random.nextInt(ALPHA.length)]
             } else {
                 ALPHADOTS[random.nextInt(ALPHADOTS.length)]
@@ -59,19 +57,19 @@ object HideAPK {
         }
         if (!builder.contains('.')) {
             // Pick a random index and set it as dot
-            val idx = random.nextInt(len - 1)
-            builder[idx] = '.'
+            val idx = random.nextInt(len - 2)
+            builder[idx + 1] = '.'
         }
         return builder.toString()
     }
 
     fun patch(
         context: Context,
-        apk: String, out: String,
+        apk: File, out: File,
         pkg: String, label: CharSequence
     ): Boolean {
         try {
-            val jar = JarMap.open(apk)
+            val jar = JarMap.open(apk, true)
             val je = jar.getJarEntry(ANDROID_MANIFEST)
             val xml = AXML(jar.getRawData(je))
 
@@ -90,103 +88,84 @@ object HideAPK {
         return true
     }
 
-    private suspend fun patchAndHide(context: Context, label: String): Boolean {
-        val dlStub = !isRunningAsStub && SDK_INT >= 28 && Const.Version.atLeast_20_2()
-        val src = if (dlStub) {
-            val stub = File(context.cacheDir, "stub.apk")
-            try {
-                svc.fetchFile(Info.remote.stub.link).byteStream().use {
-                    it.writeTo(stub)
-                }
-            } catch (e: IOException) {
-                Timber.e(e)
-                return false
-            }
-            stub.path
-        } else {
-            context.packageCodePath
+    private fun launchApp(activity: Activity, pkg: String) {
+        val intent = activity.packageManager.getLaunchIntentForPackage(pkg) ?: return
+        Config.suManager = if (pkg == APPLICATION_ID) "" else pkg
+        val self = activity.packageName
+        val flag = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        activity.grantUriPermission(pkg, Provider.APK_URI(self), flag)
+        activity.grantUriPermission(pkg, Provider.PREFS_URI(self), flag)
+        intent.putExtra(Const.Key.PREV_PKG, self)
+        activity.startActivity(intent)
+        activity.finish()
+    }
+
+    private suspend fun patchAndHide(activity: Activity, label: String): Boolean {
+        val stub = File(activity.cacheDir, "stub.apk")
+        try {
+            svc.fetchFile(Info.remote.stub.link).byteStream().writeTo(stub)
+        } catch (e: IOException) {
+            Timber.e(e)
+            stub.createNewFile()
+            val cmd = "\$MAGISKBIN/magiskinit -x manager ${stub.path}"
+            if (!Shell.su(cmd).exec().isSuccess) return false
         }
 
         // Generate a new random package name and signature
-        val repack = File(context.cacheDir, "patched.apk")
+        val repack = File(activity.cacheDir, "patched.apk")
         val pkg = genPackageName()
         Config.keyStoreRaw = ""
 
-        if (!patch(context, src, repack.path, pkg, label))
+        if (!patch(activity, stub, repack, pkg, label))
             return false
 
-        // Install the application
-        if (!Shell.su("adb_pm_install $repack").exec().isSuccess)
-            return false
-
-        context.apply {
-            val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return false
-            Config.suManager = pkg
-            grantUriPermission(pkg, APK_URI, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            grantUriPermission(pkg, PREFS_URI, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            intent.putExtra(Const.Key.PREV_PKG, packageName)
-            startActivity(intent)
+        // Install and auto launch app
+        val receiver = APKInstall.register(activity, pkg) {
+            launchApp(activity, pkg)
         }
-
+        val cmd = "adb_pm_install $repack ${activity.applicationInfo.uid}"
+        if (!Shell.su(cmd).exec().isSuccess) {
+            APKInstall.installapk(activity, repack)
+            receiver.waitIntent()?.let { activity.startActivity(it) }
+        }
         return true
     }
 
     @Suppress("DEPRECATION")
-    fun hide(context: Context, label: String) {
-        val dialog = ProgressDialog.show(context, context.getString(R.string.hide_manager_title), "", true)
-        GlobalScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                patchAndHide(context, label)
-            }
-            if (!result) {
-                Utils.toast(R.string.hide_manager_fail_toast, Toast.LENGTH_LONG)
-                dialog.dismiss()
-            }
+    suspend fun hide(activity: Activity, label: String) {
+        val dialog = android.app.ProgressDialog(activity).apply {
+            setTitle(activity.getString(R.string.hide_app_title))
+            isIndeterminate = true
+            setCancelable(false)
+            show()
         }
-    }
-
-    private suspend fun downloadAndRestore(context: Context): Boolean {
-        val apk = if (isRunningAsStub) {
-            DynAPK.current(context)
-        } else {
-            File(context.cacheDir, "manager.apk").also { apk ->
-                try {
-                    svc.fetchFile(Info.remote.app.link).byteStream().use {
-                        it.writeTo(apk)
-                    }
-                } catch (e: IOException) {
-                    Timber.e(e)
-                    return false
-                }
-            }
+        val result = withContext(Dispatchers.IO) {
+            patchAndHide(activity, label)
         }
-
-        if (!Shell.su("adb_pm_install $apk").exec().isSuccess)
-            return false
-
-        context.apply {
-            val intent = packageManager.getLaunchIntentForPackage(APPLICATION_ID) ?: return false
-            Config.suManager = ""
-            grantUriPermission(APPLICATION_ID, APK_URI, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            grantUriPermission(APPLICATION_ID, PREFS_URI, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            intent.putExtra(Const.Key.PREV_PKG, packageName)
-            startActivity(intent)
+        if (!result) {
+            dialog.dismiss()
+            Utils.toast(R.string.failure, Toast.LENGTH_LONG)
         }
-
-        return true
     }
 
     @Suppress("DEPRECATION")
-    fun restore(context: Context) {
-        val dialog = ProgressDialog.show(context, context.getString(R.string.restore_img_msg), "", true)
-        GlobalScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                downloadAndRestore(context)
-            }
-            if (!result) {
-                Utils.toast(R.string.restore_manager_fail_toast, Toast.LENGTH_LONG)
-                dialog.dismiss()
-            }
+    fun restore(activity: Activity) {
+        val dialog = android.app.ProgressDialog(activity).apply {
+            setTitle(activity.getString(R.string.restore_img_msg))
+            isIndeterminate = true
+            setCancelable(false)
+            show()
+        }
+        val apk = DynAPK.current(activity)
+        val receiver = APKInstall.register(activity, APPLICATION_ID) {
+            launchApp(activity, APPLICATION_ID)
+            dialog.dismiss()
+        }
+        val cmd = "adb_pm_install $apk ${activity.applicationInfo.uid}"
+        Shell.su(cmd).submit(Shell.EXECUTOR) { ret ->
+            if (ret.isSuccess) return@submit
+            APKInstall.installapk(activity, apk)
+            receiver.waitIntent()?.let { activity.startActivity(it) }
         }
     }
 }

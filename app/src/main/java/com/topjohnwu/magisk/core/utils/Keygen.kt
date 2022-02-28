@@ -5,9 +5,9 @@ import android.content.pm.PackageManager
 import android.util.Base64
 import android.util.Base64OutputStream
 import com.topjohnwu.magisk.core.Config
-import com.topjohnwu.signing.CryptoUtils.readCertificate
-import com.topjohnwu.signing.CryptoUtils.readPrivateKey
-import com.topjohnwu.signing.KeyData
+import com.topjohnwu.magisk.signing.CryptoUtils.readCertificate
+import com.topjohnwu.magisk.signing.CryptoUtils.readPrivateKey
+import com.topjohnwu.magisk.signing.KeyData
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
@@ -41,7 +41,7 @@ class Keygen(context: Context) : CertKeyProvider {
     }
 
     private val start = Calendar.getInstance().apply { add(Calendar.MONTH, -3) }
-    private val end = start.apply { add(Calendar.YEAR, 30) }
+    private val end = (start.clone() as Calendar).apply { add(Calendar.YEAR, 30) }
 
     override val cert get() = provider.cert
     override val key get() = provider.key

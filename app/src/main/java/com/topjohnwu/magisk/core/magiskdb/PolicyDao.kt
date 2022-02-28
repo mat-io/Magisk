@@ -1,11 +1,9 @@
 package com.topjohnwu.magisk.core.magiskdb
 
-import android.content.Context
-import android.content.pm.PackageManager
 import com.topjohnwu.magisk.core.Const
 import com.topjohnwu.magisk.core.model.su.SuPolicy
-import com.topjohnwu.magisk.core.model.su.toMap
 import com.topjohnwu.magisk.core.model.su.toPolicy
+import com.topjohnwu.magisk.di.AppContext
 import com.topjohnwu.magisk.ktx.now
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -13,9 +11,7 @@ import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
 
-class PolicyDao(
-    private val context: Context
-) : BaseDao() {
+class PolicyDao : BaseDao() {
 
     override val table: String = Table.POLICY
 
@@ -28,12 +24,6 @@ class PolicyDao(
             or {
                 lessThan("until", "0")
             }
-        }
-    }.commit()
-
-    suspend fun delete(packageName: String) = buildQuery<Delete> {
-        condition {
-            equals("package_name", packageName)
         }
     }.commit()
 
@@ -62,14 +52,10 @@ class PolicyDao(
     }
 
     private fun Map<String, String>.toPolicyOrNull(): SuPolicy? {
-        return runCatching { toPolicy(context.packageManager) }.getOrElse {
-            Timber.e(it)
-            if (it is PackageManager.NameNotFoundException) {
-                val uid = getOrElse("uid") { null } ?: return null
-                GlobalScope.launch {
-                    delete(uid.toInt())
-                }
-            }
+        return runCatching { toPolicy(AppContext.packageManager) }.getOrElse {
+            Timber.w(it)
+            val uid = getOrElse("uid") { return null }
+            GlobalScope.launch { delete(uid.toInt()) }
             null
         }
     }

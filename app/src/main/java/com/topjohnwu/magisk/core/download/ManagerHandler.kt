@@ -1,51 +1,77 @@
 package com.topjohnwu.magisk.core.download
 
-import android.content.Context
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Intent
+import androidx.core.content.getSystemService
 import androidx.core.net.toFile
-import com.topjohnwu.magisk.BuildConfig
 import com.topjohnwu.magisk.DynAPK
 import com.topjohnwu.magisk.R
+import com.topjohnwu.magisk.core.ActivityTracker
 import com.topjohnwu.magisk.core.Info
 import com.topjohnwu.magisk.core.isRunningAsStub
 import com.topjohnwu.magisk.core.tasks.HideAPK
-import com.topjohnwu.magisk.ktx.relaunchApp
+import com.topjohnwu.magisk.core.utils.MediaStoreUtils.outputStream
+import com.topjohnwu.magisk.ktx.copyAndClose
 import com.topjohnwu.magisk.ktx.writeTo
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 
-private fun Context.patch(apk: File) {
-    val patched = File(apk.parent, "patched.apk")
-    HideAPK.patch(this, apk.path, patched.path, packageName, applicationInfo.nonLocalizedLabel)
-    apk.delete()
-    patched.renameTo(apk)
-}
-
-private fun BaseDownloader.notifyHide(id: Int) {
-    update(id) {
-        it.setProgress(0, 0, true)
-            .setContentTitle(getString(R.string.hide_manager_title))
-            .setContentText("")
+private class TeeOutputStream(
+    private val o1: OutputStream,
+    private val o2: OutputStream
+) : OutputStream() {
+    override fun write(b: Int) {
+        o1.write(b)
+        o2.write(b)
+    }
+    override fun write(b: ByteArray?, off: Int, len: Int) {
+        o1.write(b, off, len)
+        o2.write(b, off, len)
+    }
+    override fun close() {
+        o1.close()
+        o2.close()
     }
 }
 
-suspend fun BaseDownloader.handleAPK(subject: Subject.Manager) {
-    val apk = subject.file.toFile()
-    val id = subject.notifyID()
+suspend fun DownloadService.handleAPK(subject: Subject.Manager, stream: InputStream) {
+    fun write(output: OutputStream) {
+        val external = subject.externalFile.outputStream()
+        stream.copyAndClose(TeeOutputStream(external, output))
+    }
+
     if (isRunningAsStub) {
-        // Move to upgrade location
-        apk.copyTo(DynAPK.update(this), overwrite = true)
-        apk.delete()
-        if (Info.stubChk.version < subject.stub.versionCode) {
-            notifyHide(id)
+        val apk = subject.file.toFile()
+        val id = subject.notifyId
+        write(DynAPK.update(this).outputStream())
+        if (Info.stub!!.version < subject.stub.versionCode) {
             // Also upgrade stub
-            service.fetchFile(subject.stub.link).byteStream().use { it.writeTo(apk) }
-            patch(apk)
+            update(id) {
+                it.setProgress(0, 0, true)
+                    .setContentTitle(getString(R.string.hide_app_title))
+                    .setContentText("")
+            }
+            service.fetchFile(subject.stub.link).byteStream().writeTo(apk)
+            val patched = File(apk.parent, "patched.apk")
+            HideAPK.patch(this, apk, patched, packageName, applicationInfo.nonLocalizedLabel)
+            apk.delete()
+            patched.renameTo(apk)
         } else {
-            // Simply relaunch the app
+            val intent = packageManager.getLaunchIntentForPackage(packageName)
+            intent!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            //noinspection InlinedApi
+            val flag = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            val pending = PendingIntent.getActivity(this, id, intent, flag)
+            if (ActivityTracker.hasForeground) {
+                val alarm = getSystemService<AlarmManager>()
+                alarm!!.set(AlarmManager.RTC, System.currentTimeMillis() + 1000, pending)
+            }
             stopSelf()
-            relaunchApp(this)
+            Runtime.getRuntime().exit(0)
         }
-    } else if (packageName != BuildConfig.APPLICATION_ID) {
-        notifyHide(id)
-        patch(apk)
+    } else {
+        write(subject.file.outputStream())
     }
 }

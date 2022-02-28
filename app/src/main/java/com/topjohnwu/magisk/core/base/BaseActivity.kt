@@ -1,31 +1,33 @@
 package com.topjohnwu.magisk.core.base
 
 import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
-import android.widget.Toast
-import androidx.annotation.CallSuper
+import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts.GetContent
+import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.appcompat.app.AppCompatActivity
-import androidx.collection.SparseArrayCompat
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import com.topjohnwu.magisk.R
-import com.topjohnwu.magisk.core.Const
+import com.topjohnwu.magisk.core.isRunningAsStub
 import com.topjohnwu.magisk.core.utils.currentLocale
 import com.topjohnwu.magisk.core.wrap
-import com.topjohnwu.magisk.ktx.set
-import com.topjohnwu.magisk.utils.Utils
-import kotlin.random.Random
-
-typealias ActivityResultCallback = BaseActivity.(Int, Intent?) -> Unit
+import com.topjohnwu.magisk.ktx.reflectField
 
 abstract class BaseActivity : AppCompatActivity() {
 
-    private val resultCallbacks by lazy { SparseArrayCompat<ActivityResultCallback>() }
+    private var permissionCallback: ((Boolean) -> Unit)? = null
+    private val requestPermission = registerForActivityResult(RequestPermission()) {
+        permissionCallback?.invoke(it)
+        permissionCallback = null
+    }
+
+    private var contentCallback: ((Uri) -> Unit)? = null
+    private val getContent = registerForActivityResult(GetContent()) {
+        if (it != null) contentCallback?.invoke(it)
+        contentCallback = null
+    }
 
     override fun applyOverrideConfiguration(config: Configuration?) {
         // Force applying our preferred local
@@ -34,71 +36,33 @@ abstract class BaseActivity : AppCompatActivity() {
     }
 
     override fun attachBaseContext(base: Context) {
-        super.attachBaseContext(base.wrap(false))
+        super.attachBaseContext(base.wrap())
     }
 
-    fun withPermission(permission: String, builder: PermissionRequestBuilder.() -> Unit) {
-        val request = PermissionRequestBuilder().apply(builder).build()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        if (isRunningAsStub) {
+            // Overwrite private members to avoid nasty "false" stack traces being logged
+            val delegate = delegate
+            val clz = delegate.javaClass
+            clz.reflectField("mActivityHandlesUiModeChecked").set(delegate, true)
+            clz.reflectField("mActivityHandlesUiMode").set(delegate, false)
+        }
+        super.onCreate(savedInstanceState)
+    }
 
+    fun withPermission(permission: String, callback: (Boolean) -> Unit) {
         if (permission == WRITE_EXTERNAL_STORAGE && Build.VERSION.SDK_INT >= 30) {
             // We do not need external rw on 30+
-            request.onSuccess()
+            callback(true)
             return
         }
-
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
-            request.onSuccess()
-        } else {
-            var requestCode: Int
-            do {
-                requestCode = Random.nextInt(Const.ID.MAX_ACTIVITY_RESULT + 1, 1 shl 15)
-            } while (resultCallbacks.containsKey(requestCode))
-            resultCallbacks[requestCode] = { result, _ ->
-                if (result > 0)
-                    request.onSuccess()
-                else
-                    request.onFailure()
-            }
-            ActivityCompat.requestPermissions(this, arrayOf(permission), requestCode)
-        }
+        permissionCallback = callback
+        requestPermission.launch(permission)
     }
 
-    fun withExternalRW(builder: PermissionRequestBuilder.() -> Unit) {
-        withPermission(WRITE_EXTERNAL_STORAGE, builder = builder)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        var success = true
-        for (res in grantResults) {
-            if (res != PackageManager.PERMISSION_GRANTED) {
-                success = false
-                break
-            }
-        }
-        resultCallbacks[requestCode]?.also {
-            resultCallbacks.remove(requestCode)
-            it(this, if (success) 1 else -1, null)
-        }
-
-    }
-
-    @CallSuper
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        resultCallbacks[requestCode]?.also { callback ->
-            resultCallbacks.remove(requestCode)
-            callback(this, resultCode, data)
-        }
-    }
-
-    fun startActivityForResult(intent: Intent, requestCode: Int, callback: ActivityResultCallback) {
-        resultCallbacks[requestCode] = callback
-        try {
-            startActivityForResult(intent, requestCode)
-        } catch (e: ActivityNotFoundException) {
-            Utils.toast(R.string.app_not_found, Toast.LENGTH_SHORT)
-        }
+    fun getContent(type: String, callback: (Uri) -> Unit) {
+        contentCallback = callback
+        getContent.launch(type)
     }
 
     override fun recreate() {
@@ -106,4 +70,8 @@ abstract class BaseActivity : AppCompatActivity() {
         finish()
     }
 
+    fun relaunch() {
+        startActivity(Intent(intent).setFlags(0))
+        finish()
+    }
 }

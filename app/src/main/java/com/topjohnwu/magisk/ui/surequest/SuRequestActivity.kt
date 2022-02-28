@@ -7,19 +7,18 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Window
 import android.view.WindowManager
-import androidx.navigation.NavController
 import com.topjohnwu.magisk.R
-import com.topjohnwu.magisk.arch.BaseUIActivity
+import com.topjohnwu.magisk.arch.UIActivity
 import com.topjohnwu.magisk.core.su.SuCallbackHandler
 import com.topjohnwu.magisk.core.su.SuCallbackHandler.REQUEST
 import com.topjohnwu.magisk.databinding.ActivityRequestBinding
-import org.koin.androidx.viewmodel.ext.android.viewModel
+import com.topjohnwu.magisk.di.viewModel
+import com.topjohnwu.magisk.ui.theme.Theme
 
-open class SuRequestActivity : BaseUIActivity<SuRequestViewModel, ActivityRequestBinding>() {
+open class SuRequestActivity : UIActivity<ActivityRequestBinding>() {
 
     override val layoutRes: Int = R.layout.activity_request
     override val viewModel: SuRequestViewModel by viewModel()
-    override val navigation: NavController? = null
 
     override fun onBackPressed() {
         viewModel.denyPressed()
@@ -30,28 +29,22 @@ open class SuRequestActivity : BaseUIActivity<SuRequestViewModel, ActivityReques
         lockOrientation()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.addFlags(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            window.setHideOverlayWindows(true)
+        }
+        setTheme(Theme.selected.themeRes)
         super.onCreate(savedInstanceState)
-
-        fun showRequest() {
-            viewModel.handleRequest(intent)
-        }
-
-        fun runHandler(action: String?) {
-            SuCallbackHandler(this, action, intent.extras)
-            finish()
-        }
 
         if (intent.action == Intent.ACTION_VIEW) {
             val action = intent.getStringExtra("action")
             if (action == REQUEST) {
-                showRequest()
+                viewModel.handleRequest(intent)
             } else {
-                runHandler(action)
+                SuCallbackHandler.run(this, action, intent.extras)
+                finish()
             }
-        } else if (intent.action == REQUEST) {
-            showRequest()
         } else {
-            runHandler(intent.action)
+            finish()
         }
     }
 
@@ -62,9 +55,6 @@ open class SuRequestActivity : BaseUIActivity<SuRequestViewModel, ActivityReques
     }
 
     private fun lockOrientation() {
-        requestedOrientation = if (Build.VERSION.SDK_INT < 18)
-            resources.configuration.orientation
-        else
-            ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
     }
 }

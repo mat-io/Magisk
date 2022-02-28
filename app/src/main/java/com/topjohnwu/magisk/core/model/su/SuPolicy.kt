@@ -1,13 +1,15 @@
+@file:SuppressLint("InlinedApi")
+
 package com.topjohnwu.magisk.core.model.su
 
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import com.topjohnwu.magisk.core.model.su.SuPolicy.Companion.INTERACTIVE
 import com.topjohnwu.magisk.ktx.getLabel
 
-
 data class SuPolicy(
-    var uid: Int,
+    val uid: Int,
     val packageName: String,
     val appName: String,
     val icon: Drawable,
@@ -23,22 +25,25 @@ data class SuPolicy(
         const val ALLOW = 2
     }
 
-}
+    fun toLog(toUid: Int, fromPid: Int, command: String) = SuLog(
+        uid, toUid, fromPid, packageName, appName,
+        command, policy == ALLOW)
 
-fun SuPolicy.toMap() = mapOf(
-    "uid" to uid,
-    "package_name" to packageName,
-    "policy" to policy,
-    "until" to until,
-    "logging" to logging,
-    "notification" to notification
-)
+    fun toMap() = mapOf(
+        "uid" to uid,
+        "package_name" to packageName,
+        "policy" to policy,
+        "until" to until,
+        "logging" to logging,
+        "notification" to notification
+    )
+}
 
 @Throws(PackageManager.NameNotFoundException::class)
 fun Map<String, String>.toPolicy(pm: PackageManager): SuPolicy {
     val uid = get("uid")?.toIntOrNull() ?: -1
     val packageName = get("package_name").orEmpty()
-    val info = pm.getApplicationInfo(packageName, PackageManager.GET_UNINSTALLED_PACKAGES)
+    val info = pm.getApplicationInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES)
 
     if (info.uid != uid)
         throw PackageManager.NameNotFoundException()
@@ -59,12 +64,22 @@ fun Map<String, String>.toPolicy(pm: PackageManager): SuPolicy {
 fun Int.toPolicy(pm: PackageManager, policy: Int = INTERACTIVE): SuPolicy {
     val pkg = pm.getPackagesForUid(this)?.firstOrNull()
         ?: throw PackageManager.NameNotFoundException()
-    val info = pm.getApplicationInfo(pkg, PackageManager.GET_UNINSTALLED_PACKAGES)
+    val info = pm.getApplicationInfo(pkg, PackageManager.MATCH_UNINSTALLED_PACKAGES)
     return SuPolicy(
         uid = info.uid,
         packageName = pkg,
         appName = info.getLabel(pm),
         icon = info.loadIcon(pm),
+        policy = policy
+    )
+}
+
+fun Int.toUidPolicy(pm: PackageManager, policy: Int): SuPolicy {
+    return SuPolicy(
+        uid = this,
+        packageName = "[UID] $this",
+        appName = "[UID] $this",
+        icon = pm.defaultActivityIcon,
         policy = policy
     )
 }

@@ -1,44 +1,19 @@
 package com.topjohnwu.magisk.data.network
 
-import com.topjohnwu.magisk.core.Const
 import com.topjohnwu.magisk.core.model.BranchInfo
-import com.topjohnwu.magisk.core.model.RepoJson
+import com.topjohnwu.magisk.core.model.ModuleJson
 import com.topjohnwu.magisk.core.model.UpdateInfo
 import okhttp3.ResponseBody
 import retrofit2.http.*
 
-private const val REVISION = "revision"
 private const val BRANCH = "branch"
 private const val REPO = "repo"
-
-const val MAGISK_FILES = "topjohnwu/magisk_files"
-const val MAGISK_MAIN = "topjohnwu/Magisk"
+private const val FILE = "file"
 
 interface GithubPageServices {
 
-    @GET("stable.json")
-    suspend fun fetchStableUpdate(): UpdateInfo
-
-    @GET("beta.json")
-    suspend fun fetchBetaUpdate(): UpdateInfo
-}
-
-interface JSDelivrServices {
-
-    @GET("$MAGISK_FILES@{$REVISION}/snet")
-    @Streaming
-    suspend fun fetchSafetynet(@Path(REVISION) revision: String = Const.SNET_REVISION): ResponseBody
-
-    @GET("$MAGISK_FILES@{$REVISION}/bootctl")
-    @Streaming
-    suspend fun fetchBootctl(@Path(REVISION) revision: String = Const.BOOTCTL_REVISION): ResponseBody
-
-    @GET("$MAGISK_FILES@{$REVISION}/canary.json")
-    suspend fun fetchCanaryUpdate(@Path(REVISION) revision: String): UpdateInfo
-
-    @GET("$MAGISK_MAIN@{$REVISION}/scripts/module_installer.sh")
-    @Streaming
-    suspend fun fetchInstaller(@Path(REVISION) revision: String): ResponseBody
+    @GET("{$FILE}")
+    suspend fun fetchUpdateJSON(@Path(FILE) file: String): UpdateInfo
 }
 
 interface RawServices {
@@ -47,14 +22,14 @@ interface RawServices {
     suspend fun fetchCustomUpdate(@Url url: String): UpdateInfo
 
     @GET
-    suspend fun fetchRepoInfo(@Url url: String): RepoJson
-
-    @GET
     @Streaming
     suspend fun fetchFile(@Url url: String): ResponseBody
 
     @GET
     suspend fun fetchString(@Url url: String): String
+
+    @GET
+    suspend fun fetchModuleJson(@Url url: String): ModuleJson
 
 }
 
@@ -67,4 +42,3 @@ interface GithubApiServices {
         @Path(BRANCH) branch: String
     ): BranchInfo
 }
-

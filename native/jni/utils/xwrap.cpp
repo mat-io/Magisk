@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <sys/sendfile.h>
 #include <sys/ptrace.h>
+#include <sys/inotify.h>
 
 #include <utils.hpp>
 
@@ -198,26 +199,9 @@ int xlisten(int sockfd, int backlog) {
     return ret;
 }
 
-static int accept4_compat(int sockfd, struct sockaddr *addr, socklen_t *addrlen, int flags) {
-    int fd = accept(sockfd, addr, addrlen);
-    if (fd < 0) {
-        PLOGE("accept");
-    } else {
-        if (flags & SOCK_CLOEXEC)
-            fcntl(fd, F_SETFD, FD_CLOEXEC);
-        if (flags & SOCK_NONBLOCK) {
-            int i = fcntl(fd, F_GETFL);
-            fcntl(fd, F_SETFL, i | O_NONBLOCK);
-        }
-    }
-    return fd;
-}
-
 int xaccept4(int sockfd, struct sockaddr *addr, socklen_t *addrlen, int flags) {
     int fd = accept4(sockfd, addr, addrlen, flags);
     if (fd < 0) {
-        if (errno == ENOSYS)
-            return accept4_compat(sockfd, addr, addrlen, flags);
         PLOGE("accept4");
     }
     return fd;
@@ -270,6 +254,14 @@ int xpthread_create(pthread_t *thread, const pthread_attr_t *attr,
         PLOGE("pthread_create");
     }
     return errno;
+}
+
+int xaccess(const char *path, int mode) {
+    int ret = access(path, mode);
+    if (ret < 0) {
+        PLOGE("access %s", path);
+    }
+    return ret;
 }
 
 int xstat(const char *pathname, struct stat *buf) {
@@ -349,6 +341,20 @@ ssize_t xreadlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     }
     return ret;
 #endif
+}
+
+int xfaccessat(int dirfd, const char *pathname) {
+    int ret = faccessat(dirfd, pathname, F_OK, 0);
+    if (ret < 0) {
+        PLOGE("faccessat %s", pathname);
+    }
+#if defined(__i386__) || defined(__x86_64__)
+    if (ret > 0 && errno == 0) {
+        LOGD("faccessat success but ret is %d\n", ret);
+        ret = 0;
+    }
+#endif
+    return ret;
 }
 
 int xsymlink(const char *target, const char *linkpath) {
@@ -444,7 +450,7 @@ void *xmmap(void *addr, size_t length, int prot, int flags,
 
 ssize_t xsendfile(int out_fd, int in_fd, off_t *offset, size_t count) {
     ssize_t ret = sendfile(out_fd, in_fd, offset, count);
-    if (count != ret) {
+    if (ret < 0) {
         PLOGE("sendfile");
     }
     return ret;

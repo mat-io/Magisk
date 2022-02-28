@@ -1,72 +1,62 @@
 ![](docs/images/logo.png)
 
-![ZIP Downloads](https://img.shields.io/badge/dynamic/json?color=blue&label=ZIP%20Downloads&query=magisk&url=https%3A%2F%2Fraw.githubusercontent.com%2Ftopjohnwu%2Fmagisk_files%2Fcount%2Fcount.json&cacheSeconds=1800)
-![APK Downloads](https://img.shields.io/badge/dynamic/json?color=green&label=APK%20Downloads&query=manager&url=https%3A%2F%2Fraw.githubusercontent.com%2Ftopjohnwu%2Fmagisk_files%2Fcount%2Fcount.json&cacheSeconds=1800)
+[![Downloads](https://img.shields.io/badge/dynamic/json?color=green&label=Downloads&query=totalString&url=https%3A%2F%2Fraw.githubusercontent.com%2Ftopjohnwu%2Fmagisk-files%2Fcount%2Fcount.json&cacheSeconds=1800)](https://raw.githubusercontent.com/topjohnwu/magisk-files/count/count.json)
+
+#### This is not an officially supported Google product
 
 ## Introduction
 
-Magisk is a suite of open source tools for customizing Android, supporting devices higher than Android 4.2. It covers fundamental parts of Android customization: root, boot scripts, SELinux patches, AVB2.0 / dm-verity / forceencrypt removals etc.
+Magisk is a suite of open source software for customizing Android, supporting devices higher than Android 5.0.<br>
+Some highlight features:
 
-Here are some feature highlights:
-
-- **MagiskSU**: Provide root access to your device
+- **MagiskSU**: Provide root access for applications
 - **Magisk Modules**: Modify read-only partitions by installing modules
-- **MagiskHide**: Hide Magisk from root detections / system integrity checks
+- **MagiskBoot**: The most complete tool for unpacking and repacking Android boot images
+- **Zygisk**: Run code in every Android applications' processes
 
 ## Downloads
 
-[![](https://img.shields.io/badge/Magisk%20Manager-v8.0.6-green)](https://github.com/topjohnwu/Magisk/releases/download/manager-v8.0.6/MagiskManager-v8.0.6.apk)
-[![](https://img.shields.io/badge/Magisk%20Manager-Canary-red)](https://raw.githubusercontent.com/topjohnwu/magisk_files/canary/app-debug.apk)
-<br>
-[![](https://img.shields.io/badge/Magisk-v21.3-blue)](https://github.com/topjohnwu/Magisk/releases/tag/v21.3)
-[![](https://img.shields.io/badge/Magisk%20Beta-v21.3-blue)](https://github.com/topjohnwu/Magisk/releases/tag/v21.3)
+[Github](https://github.com/topjohnwu/Magisk/) is the only source where you can get official Magisk information and downloads.
+
+[![](https://img.shields.io/badge/Magisk-v23.0-blue)](https://github.com/topjohnwu/Magisk/releases/tag/v23.0)
+[![](https://img.shields.io/badge/Magisk%20Beta-v24.0-blue)](https://github.com/topjohnwu/Magisk/releases/tag/v24.0)
+[![](https://img.shields.io/badge/Magisk-Canary-red)](https://raw.githubusercontent.com/topjohnwu/magisk-files/canary/app-debug.apk)
 
 ## Useful Links
 
 - [Installation Instruction](https://topjohnwu.github.io/Magisk/install.html)
-- [Frequently Asked Questions](https://topjohnwu.github.io/Magisk/faq.html)
 - [Magisk Documentation](https://topjohnwu.github.io/Magisk/)
 - [Magisk Troubleshoot Wiki](https://www.didgeridoohan.com/magisk/HomePage) (by [@Didgeridoohan](https://github.com/Didgeridoohan))
 
-## Android Version Support
-
-- Android 4.2+: MagiskSU and Magisk Modules Only
-- Android 4.4+: All core features available
-- Android 6.0+: Guaranteed MagiskHide support
-- Android 7.0+: Full MagiskHide protection
-- Android 9.0+: Magisk Manager stealth mode
-
 ## Bug Reports
-
-Canary Channels are cutting edge builds for those adventurous. To access canary builds, install the Canary Magisk Manager, switch to the Canary Channel in settings and upgrade.
 
 **Only bug reports from Canary builds will be accepted.**
 
 For installation issues, upload both boot image and install logs.<br>
 For Magisk issues, upload boot logcat or dmesg.<br>
-For Magisk Manager crashes, record and upload the logcat when the crash occurs.
+For Magisk app crashes, record and upload the logcat when the crash occurs.
 
 ## Building and Development
 
 - Magisk builds on any OS Android Studio supports. Install Android Studio and do the initial setups.
 - Clone sources: `git clone --recurse-submodules https://github.com/topjohnwu/Magisk.git`
 - Install Python 3.6+ \
-(Windows only: select **'Add Python to PATH'** in installer, and run `pip install colorama` after install)
+  (Windows only: select **'Add Python to PATH'** in installer, and run `pip install colorama` after install)
 - Configure to use the JDK bundled in Android Studio:
-	- macOS: `export JAVA_HOME="/Applications/Android Studio.app/Contents/jre/jdk/Contents/Home"`
-	- Linux: `export PATH="/path/to/androidstudio/jre/bin:$PATH"`
-	- Windows: Add `C:\Path\To\Android Studio\jre\bin` to environment variable `PATH`
+  - macOS: `export JAVA_HOME="/Applications/Android Studio.app/Contents/jre/Contents/Home"`
+  - Linux: `export PATH="/path/to/androidstudio/jre/bin:$PATH"`
+  - Windows: Add `C:\Path\To\Android Studio\jre\bin` to environment variable `PATH`
 - Set environment variable `ANDROID_SDK_ROOT` to the Android SDK folder (can be found in Android Studio settings)
 - Run `./build.py ndk` to let the script download and install NDK for you
 - To start building, run `build.py` to see your options. \
-For each action, use `-h` to access help (e.g. `./build.py all -h`)
-- To start development, open the project in Android Studio. Both app (Kotlin/Java) and native (C++/C) source code can be properly developed using the IDE, but *always* use `build.py` for building.
+  For each action, use `-h` to access help (e.g. `./build.py all -h`)
+- To start development, open the project with Android Studio. The IDE can be used for both app (Kotlin/Java) and native (C++/C) sources.
 - Optionally, set custom configs with `config.prop`. A sample `config.prop.sample` is provided.
 - To sign APKs and zips with your own private keys, set signing configs in `config.prop`. For more info, check [Google's Documentation](https://developer.android.com/studio/publish/app-signing.html#generate-key).
 
 ## Translation Contributions
 
-Default string resources for Magisk Manager and its stub APK are located here:
+Default string resources for the Magisk app and its stub APK are located here:
 
 - `app/src/main/res/values/strings.xml`
 - `stub/src/main/res/values/strings.xml`

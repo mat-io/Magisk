@@ -9,9 +9,6 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.*
-import android.content.pm.ServiceInfo
-import android.content.pm.ServiceInfo.FLAG_ISOLATED_PROCESS
-import android.content.pm.ServiceInfo.FLAG_USE_APP_ZYGOTE
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.database.Cursor
@@ -21,7 +18,6 @@ import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.LayerDrawable
 import android.net.Uri
-import android.os.Build
 import android.os.Build.VERSION.SDK_INT
 import android.text.PrecomputedText
 import android.view.View
@@ -41,12 +37,14 @@ import androidx.core.widget.TextViewCompat
 import androidx.databinding.BindingAdapter
 import androidx.fragment.app.Fragment
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
+import androidx.lifecycle.lifecycleScope
 import androidx.transition.AutoTransition
 import androidx.transition.TransitionManager
 import com.topjohnwu.magisk.R
 import com.topjohnwu.magisk.core.Const
-import com.topjohnwu.magisk.core.ResMgr
+import com.topjohnwu.magisk.core.base.BaseActivity
 import com.topjohnwu.magisk.core.utils.currentLocale
+import com.topjohnwu.magisk.di.AppContext
 import com.topjohnwu.magisk.utils.DynamicClassLoader
 import com.topjohnwu.magisk.utils.Utils
 import com.topjohnwu.superuser.Shell
@@ -56,13 +54,6 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import java.io.File
 import java.lang.reflect.Array as JArray
-
-val packageName: String get() = get<Context>().packageName
-
-val ServiceInfo.isIsolated get() = (flags and FLAG_ISOLATED_PROCESS) != 0
-
-@get:SuppressLint("InlinedApi")
-val ServiceInfo.useAppZygote get() = (flags and FLAG_USE_APP_ZYGOTE) != 0
 
 fun Context.rawResource(id: Int) = resources.openRawResource(id)
 
@@ -82,6 +73,11 @@ fun Context.getBitmap(id: Int): Bitmap {
     drawable.draw(canvas)
     return bitmap
 }
+
+val Context.deviceProtectedContext: Context get() =
+    if (SDK_INT >= 24) {
+        createDeviceProtectedStorageContext()
+    } else { this }
 
 fun Intent.startActivity(context: Context) = context.startActivity(this)
 
@@ -227,15 +223,13 @@ fun Context.colorStateListCompat(@ColorRes id: Int) = try {
     null
 }
 
-fun Context.drawableCompat(@DrawableRes id: Int) = ContextCompat.getDrawable(this, id)
+fun Context.drawableCompat(@DrawableRes id: Int) = AppCompatResources.getDrawable(this, id)
 /**
  * Pass [start] and [end] dimensions, function will return left and right
  * with respect to RTL layout direction
  */
 fun Context.startEndToLeftRight(start: Int, end: Int): Pair<Int, Int> {
-    if (SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 &&
-        resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-    ) {
+    if (resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL) {
         return end to start
     }
     return start to end
@@ -243,8 +237,7 @@ fun Context.startEndToLeftRight(start: Int, end: Int): Pair<Int, Int> {
 
 fun Context.openUrl(url: String) = Utils.openLink(this, url.toUri())
 
-@Suppress("FunctionName")
-inline fun <reified T> T.DynamicClassLoader(apk: File) =
+inline fun <reified T> T.createClassLoader(apk: File) =
     DynamicClassLoader(apk, T::class.java.classLoader)
 
 fun Context.unwrap(): Context {
@@ -295,57 +288,23 @@ fun ViewGroup.startAnimations() {
     )
 }
 
-var View.coroutineScope: CoroutineScope
-    get() = getTag(R.id.coroutineScope) as? CoroutineScope ?: GlobalScope
-    set(value) = setTag(R.id.coroutineScope, value)
-
-@set:BindingAdapter("precomputedText")
-var TextView.precomputedText: CharSequence
-    get() = text
-    set(value) {
-        val callback = tag as? Runnable
-
-        // Don't even bother pre 21
-        if (SDK_INT < 21) {
-            post {
-                text = value
-                isGone = false
-                callback?.run()
-            }
-            return
-        }
-
-        coroutineScope.launch(Dispatchers.IO) {
-            if (SDK_INT >= 29) {
-                // Internally PrecomputedTextCompat will use platform API on API 29+
-                // Due to some stupid crap OEM (Samsung) implementation, this can actually
-                // crash our app. Directly use platform APIs with some workarounds
-                val pre = PrecomputedText.create(value, textMetricsParams)
-                post {
-                    try {
-                        text = pre
-                    } catch (e: IllegalArgumentException) {
-                        // Override to computed params to workaround crashes
-                        textMetricsParams = pre.params
-                        text = pre
-                    }
-                    isGone = false
-                    callback?.run()
-                }
-            } else {
-                val tv = this@precomputedText
-                val params = TextViewCompat.getTextMetricsParams(tv)
-                val pre = PrecomputedTextCompat.create(value, params)
-                post {
-                    TextViewCompat.setPrecomputedText(tv, pre)
-                    isGone = false
-                    callback?.run()
-                }
-            }
-        }
+val View.activity: Activity get() {
+    var context = context
+    while(true) {
+        if (context !is ContextWrapper)
+            error("View is not attached to activity")
+        if (context is Activity)
+            return context
+        context = context.baseContext
     }
+}
 
-fun Int.dpInPx(): Int {
-    val scale = ResMgr.resource.displayMetrics.density
-    return (this * scale + 0.5).toInt()
+@SuppressLint("PrivateApi")
+fun getProperty(key: String, def: String): String {
+    runCatching {
+        val clazz = Class.forName("android.os.SystemProperties")
+        val get = clazz.getMethod("get", String::class.java, String::class.java)
+        return get.invoke(clazz, key, def) as String
+    }
+    return def
 }

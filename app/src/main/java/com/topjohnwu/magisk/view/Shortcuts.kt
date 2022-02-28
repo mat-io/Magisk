@@ -1,6 +1,5 @@
 package com.topjohnwu.magisk.view
 
-import android.annotation.TargetApi
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ShortcutInfo
@@ -8,6 +7,8 @@ import android.content.pm.ShortcutManager
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.core.content.getSystemService
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import com.topjohnwu.magisk.R
 import com.topjohnwu.magisk.core.Const
@@ -24,16 +25,14 @@ object Shortcuts {
         }
     }
 
-    @TargetApi(26)
     fun addHomeIcon(context: Context) {
-        val manager = context.getSystemService<ShortcutManager>() ?: return
         val intent = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
-        val info = ShortcutInfo.Builder(context, Const.Nav.HOME)
-            .setShortLabel(context.getString(R.string.app_name))
+        val info = ShortcutInfoCompat.Builder(context, Const.Nav.HOME)
+            .setShortLabel(context.getString(R.string.magisk))
             .setIntent(intent)
-            .setIcon(context.getIcon(R.drawable.ic_launcher))
+            .setIcon(context.getIconCompat(R.drawable.ic_launcher))
             .build()
-        manager.requestPinShortcut(info, null)
+        ShortcutManagerCompat.requestPinShortcut(context, info, null)
     }
 
     private fun Context.getIconCompat(id: Int): IconCompat {
@@ -65,18 +64,6 @@ object Shortcuts {
                     .build()
             )
         }
-        if (Info.env.magiskHide) {
-            shortCuts.add(
-                ShortcutInfo.Builder(context, Const.Nav.HIDE)
-                    .setShortLabel(context.getString(R.string.magiskhide))
-                    .setIntent(
-                        Intent(intent).putExtra(Const.Key.OPEN_SECTION, Const.Nav.HIDE)
-                    )
-                    .setIcon(context.getIcon(R.drawable.sc_magiskhide))
-                    .setRank(1)
-                    .build()
-            )
-        }
         if (Info.env.isActive) {
             shortCuts.add(
                 ShortcutInfo.Builder(context, Const.Nav.MODULES)
@@ -85,7 +72,7 @@ object Shortcuts {
                         Intent(intent).putExtra(Const.Key.OPEN_SECTION, Const.Nav.MODULES)
                     )
                     .setIcon(context.getIcon(R.drawable.sc_extension))
-                    .setRank(2)
+                    .setRank(1)
                     .build()
             )
         }

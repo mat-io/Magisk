@@ -1,55 +1,50 @@
 package com.topjohnwu.magisk.ui
 
 import android.content.Intent
-import android.os.Build
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.view.MenuItem
 import android.view.View
-import android.view.ViewTreeObserver
 import android.view.WindowManager
-import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.view.forEach
-import androidx.core.view.updateLayoutParams
+import androidx.core.view.isGone
+import androidx.core.view.isVisible
 import androidx.navigation.NavDirections
-import com.google.android.material.card.MaterialCardView
 import com.topjohnwu.magisk.MainDirections
 import com.topjohnwu.magisk.R
-import com.topjohnwu.magisk.arch.BaseUIActivity
+import com.topjohnwu.magisk.arch.BaseMainActivity
 import com.topjohnwu.magisk.arch.BaseViewModel
-import com.topjohnwu.magisk.arch.ReselectionTarget
 import com.topjohnwu.magisk.core.*
 import com.topjohnwu.magisk.databinding.ActivityMainMd2Binding
+import com.topjohnwu.magisk.di.viewModel
 import com.topjohnwu.magisk.ktx.startAnimations
 import com.topjohnwu.magisk.ui.home.HomeFragmentDirections
-import com.topjohnwu.magisk.utils.HideBottomViewOnScrollBehavior
-import com.topjohnwu.magisk.utils.HideTopViewOnScrollBehavior
-import com.topjohnwu.magisk.utils.HideableBehavior
 import com.topjohnwu.magisk.utils.Utils
 import com.topjohnwu.magisk.view.MagiskDialog
 import com.topjohnwu.magisk.view.Shortcuts
-import org.koin.androidx.viewmodel.ext.android.viewModel
+import java.io.File
 
 class MainViewModel : BaseViewModel()
 
-open class MainActivity : BaseUIActivity<MainViewModel, ActivityMainMd2Binding>() {
+class MainActivity : BaseMainActivity<ActivityMainMd2Binding>() {
 
     override val layoutRes = R.layout.activity_main_md2
     override val viewModel by viewModel<MainViewModel>()
-    override val navHost: Int = R.id.main_nav_host
+    override val navHostId: Int = R.id.main_nav_host
+    override val snackbarAnchorView: View?
+        get() {
+            val fragmentAnchor = currentFragment?.snackbarAnchorView
+            return when {
+                fragmentAnchor?.isVisible == true -> fragmentAnchor
+                binding.mainNavigation.isVisible -> return binding.mainNavigation
+                else -> null
+            }
+        }
 
     private var isRootFragment = true
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Make sure Splash is always ran before us
-        if (!SplashActivity.DONE) {
-            redirect<SplashActivity>().also { startActivity(it) }
-            finish()
-            return
-        }
-
+    override fun showMainUI(savedInstanceState: Bundle?) {
         setContentView()
         showUnsupportedMessage()
         askForHomeShortcut()
@@ -77,36 +72,28 @@ open class MainActivity : BaseUIActivity<MainViewModel, ActivityMainMd2Binding>(
 
         setSupportActionBar(binding.mainToolbar)
 
-        binding.mainToolbarWrapper.updateLayoutParams<CoordinatorLayout.LayoutParams> {
-            behavior = HideTopViewOnScrollBehavior<MaterialCardView>()
-        }
-        binding.mainBottomBar.updateLayoutParams<CoordinatorLayout.LayoutParams> {
-            behavior = HideBottomViewOnScrollBehavior<MaterialCardView>()
-        }
-        binding.mainNavigation.setOnNavigationItemSelectedListener {
+        binding.mainNavigation.setOnItemSelectedListener {
             getScreen(it.itemId)?.navigate()
             true
         }
-        binding.mainNavigation.setOnNavigationItemReselectedListener {
-            (currentFragment as? ReselectionTarget)?.onReselected()
+        binding.mainNavigation.setOnItemReselectedListener {
+            // https://issuetracker.google.com/issues/124538620
         }
-
-        val section = if (intent.action == ACTION_APPLICATION_PREFERENCES) Const.Nav.SETTINGS
-        else intent.getStringExtra(Const.Key.OPEN_SECTION)
-        getScreen(section)?.navigate()
-
-        if (savedInstanceState != null) {
-            if (!isRootFragment) {
-                requestNavigationHidden()
-            }
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
         binding.mainNavigation.menu.apply {
             findItem(R.id.superuserFragment)?.isEnabled = Utils.showSuperUser()
-            findItem(R.id.logFragment)?.isEnabled = Info.env.isActive
+            findItem(R.id.modulesFragment)?.isEnabled = Info.env.isActive
+        }
+
+        val section =
+            if (intent.action == Intent.ACTION_APPLICATION_PREFERENCES)
+                Const.Nav.SETTINGS
+            else
+                intent.getStringExtra(Const.Key.OPEN_SECTION)
+
+        getScreen(section)?.navigate()
+
+        if (!isRootFragment) {
+            requestNavigationHidden(requiresAnimation = savedInstanceState == null)
         }
     }
 
@@ -126,45 +113,14 @@ open class MainActivity : BaseUIActivity<MainViewModel, ActivityMainMd2Binding>(
         }
     }
 
-    @Suppress("UNCHECKED_CAST")
-    internal fun requestNavigationHidden(hide: Boolean = true) {
-        val topView = binding.mainToolbarWrapper
-        val bottomView = binding.mainBottomBar
-
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT &&
-            !binding.mainBottomBar.isAttachedToWindow
-        ) {
-            binding.mainBottomBar.viewTreeObserver.addOnWindowAttachListener(object :
-                ViewTreeObserver.OnWindowAttachListener {
-
-                init {
-                    val listener =
-                        binding.mainBottomBar.tag as? ViewTreeObserver.OnWindowAttachListener
-                    if (listener != null) {
-                        binding.mainBottomBar.viewTreeObserver.removeOnWindowAttachListener(listener)
-                    }
-                    binding.mainBottomBar.tag = this
-                }
-
-                override fun onWindowAttached() {
-                    requestNavigationHidden(hide)
-                }
-
-                override fun onWindowDetached() {
-                }
-            })
-            return
+    internal fun requestNavigationHidden(hide: Boolean = true, requiresAnimation: Boolean = true) {
+        val bottomView = binding.mainNavigation
+        if (requiresAnimation) {
+            bottomView.isVisible = true
+            bottomView.isHidden = hide
+        } else {
+            bottomView.isGone = hide
         }
-
-        val topParams = topView.layoutParams as? CoordinatorLayout.LayoutParams
-        val bottomParams = bottomView.layoutParams as? CoordinatorLayout.LayoutParams
-
-        val topBehavior = topParams?.behavior as? HideableBehavior<View>
-        val bottomBehavior = bottomParams?.behavior as? HideableBehavior<View>
-
-        topBehavior?.setHidden(topView, hide = false, lockState = false)
-        bottomBehavior?.setHidden(bottomView, hide, hide)
     }
 
     fun invalidateToolbar() {
@@ -174,9 +130,8 @@ open class MainActivity : BaseUIActivity<MainViewModel, ActivityMainMd2Binding>(
 
     private fun getScreen(name: String?): NavDirections? {
         return when (name) {
-            Const.Nav.SUPERUSER -> HomeFragmentDirections.actionSuperuserFragment()
-            Const.Nav.HIDE -> HomeFragmentDirections.actionHideFragment()
-            Const.Nav.MODULES -> HomeFragmentDirections.actionModuleFragment()
+            Const.Nav.SUPERUSER -> MainDirections.actionSuperuserFragment()
+            Const.Nav.MODULES -> MainDirections.actionModuleFragment()
             Const.Nav.SETTINGS -> HomeFragmentDirections.actionHomeFragmentToSettingsFragment()
             else -> null
         }
@@ -194,12 +149,42 @@ open class MainActivity : BaseUIActivity<MainViewModel, ActivityMainMd2Binding>(
 
     private fun showUnsupportedMessage() {
         if (Info.env.isUnsupported) {
-            MagiskDialog(this)
-                .applyTitle(R.string.unsupport_magisk_title)
-                .applyMessage(R.string.unsupport_magisk_msg, Const.Version.MIN_VERSION)
-                .applyButton(MagiskDialog.ButtonType.POSITIVE) { titleRes = android.R.string.ok }
-                .cancellable(true)
-                .reveal()
+            MagiskDialog(this).apply {
+                setTitle(R.string.unsupport_magisk_title)
+                setMessage(R.string.unsupport_magisk_msg, Const.Version.MIN_VERSION)
+                setButton(MagiskDialog.ButtonType.POSITIVE) { text = android.R.string.ok }
+                setCancelable(false)
+            }.show()
+        }
+
+        if (!Info.isEmulator && Info.env.isActive && System.getenv("PATH")
+                ?.split(':')
+                ?.filterNot { File("$it/magisk").exists() }
+                ?.any { File("$it/su").exists() } == true) {
+            MagiskDialog(this).apply {
+                setTitle(R.string.unsupport_general_title)
+                setMessage(R.string.unsupport_other_su_msg)
+                setButton(MagiskDialog.ButtonType.POSITIVE) { text = android.R.string.ok }
+                setCancelable(false)
+            }.show()
+        }
+
+        if (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0) {
+            MagiskDialog(this).apply {
+                setTitle(R.string.unsupport_general_title)
+                setMessage(R.string.unsupport_system_app_msg)
+                setButton(MagiskDialog.ButtonType.POSITIVE) { text = android.R.string.ok }
+                setCancelable(false)
+            }.show()
+        }
+
+        if (applicationInfo.flags and ApplicationInfo.FLAG_EXTERNAL_STORAGE != 0) {
+            MagiskDialog(this).apply {
+                setTitle(R.string.unsupport_general_title)
+                setMessage(R.string.unsupport_external_storage_msg)
+                setButton(MagiskDialog.ButtonType.POSITIVE) { text = android.R.string.ok }
+                setCancelable(false)
+            }.show()
         }
     }
 
@@ -208,25 +193,20 @@ open class MainActivity : BaseUIActivity<MainViewModel, ActivityMainMd2Binding>(
             ShortcutManagerCompat.isRequestPinShortcutSupported(this)) {
             // Ask and show dialog
             Config.askedHome = true
-            MagiskDialog(this)
-                .applyTitle(R.string.add_shortcut_title)
-                .applyMessage(R.string.add_shortcut_msg)
-                .applyButton(MagiskDialog.ButtonType.NEGATIVE) {
-                    titleRes = android.R.string.cancel
-                }.applyButton(MagiskDialog.ButtonType.POSITIVE) {
-                    titleRes = android.R.string.ok
+            MagiskDialog(this).apply {
+                setTitle(R.string.add_shortcut_title)
+                setMessage(R.string.add_shortcut_msg)
+                setButton(MagiskDialog.ButtonType.NEGATIVE) {
+                    text = android.R.string.cancel
+                }
+                setButton(MagiskDialog.ButtonType.POSITIVE) {
+                    text = android.R.string.ok
                     onClick {
                         Shortcuts.addHomeIcon(this@MainActivity)
                     }
-                }.cancellable(true)
-                .reveal()
+                }
+                setCancelable(true)
+            }.show()
         }
     }
-
-    companion object {
-        private val ACTION_APPLICATION_PREFERENCES get() =
-            if (Build.VERSION.SDK_INT >= 24) Intent.ACTION_APPLICATION_PREFERENCES
-            else "???"
-    }
-
 }

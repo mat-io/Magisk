@@ -1,40 +1,33 @@
 package com.topjohnwu.magisk.core
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.multidex.MultiDex
-import androidx.work.WorkManager
-import com.topjohnwu.magisk.BuildConfig
 import com.topjohnwu.magisk.DynAPK
-import com.topjohnwu.magisk.core.utils.IODispatcherExecutor
-import com.topjohnwu.magisk.core.utils.RootInit
-import com.topjohnwu.magisk.core.utils.updateConfig
-import com.topjohnwu.magisk.di.koinModules
-import com.topjohnwu.magisk.ktx.unwrap
+import com.topjohnwu.magisk.core.utils.*
+import com.topjohnwu.magisk.di.ServiceLocator
 import com.topjohnwu.superuser.Shell
-import org.koin.android.ext.koin.androidContext
-import org.koin.core.context.startKoin
+import com.topjohnwu.superuser.internal.UiThreadHandler
+import com.topjohnwu.superuser.ipc.RootService
+import kotlinx.coroutines.Dispatchers
 import timber.log.Timber
 import kotlin.system.exitProcess
 
 open class App() : Application() {
 
     constructor(o: Any) : this() {
-        Info.stub = DynAPK.load(o)
+        val data = DynAPK.Data(o)
+        // Add the root service name mapping
+        data.classToComponent[RootRegistry::class.java.name] = data.rootService.name
+        // Send back the actual root service class
+        data.rootService = RootRegistry::class.java
+        Info.stub = data
     }
 
     init {
-        AppCompatDelegate.setCompatVectorFromResourcesEnabled(true)
-        Shell.setDefaultBuilder(Shell.Builder.create()
-            .setFlags(Shell.FLAG_MOUNT_MASTER)
-            .setInitializers(RootInit::class.java)
-            .setTimeout(2))
-        Shell.EXECUTOR = IODispatcherExecutor()
-
         // Always log full stack trace with Timber
         Timber.plant(Timber.DebugTree())
         Thread.setDefaultUncaughtExceptionHandler { _, e ->
@@ -43,47 +36,57 @@ open class App() : Application() {
         }
     }
 
-    override fun attachBaseContext(base: Context) {
-        // Basic setup
-        if (BuildConfig.DEBUG)
-            MultiDex.install(base)
+    override fun attachBaseContext(context: Context) {
+        Shell.setDefaultBuilder(Shell.Builder.create()
+            .setFlags(Shell.FLAG_MOUNT_MASTER)
+            .setInitializers(ShellInit::class.java)
+            .setTimeout(2))
+        Shell.EXECUTOR = DispatcherExecutor(Dispatchers.IO)
 
-        // Some context magic
+        // Get the actual ContextImpl
         val app: Application
-        val impl: Context
-        if (base is Application) {
-            app = base
-            impl = base.baseContext
+        val base: Context
+        if (context is Application) {
+            app = context
+            base = context.baseContext
         } else {
             app = this
-            impl = base
+            base = context
         }
-        val wrapped = impl.wrap()
-        super.attachBaseContext(wrapped)
+        super.attachBaseContext(base)
+        ServiceLocator.context = base
 
-        // Normal startup
-        startKoin {
-            androidContext(wrapped)
-            modules(koinModules)
+        refreshLocale()
+        AppApkPath = if (isRunningAsStub) {
+            DynAPK.current(base).path
+        } else {
+            base.packageResourcePath
         }
-        ResMgr.init(impl)
-        app.registerActivityLifecycleCallbacks(ForegroundTracker)
-        WorkManager.initialize(impl.wrapJob(), androidx.work.Configuration.Builder().build())
+
+        base.resources.patch()
+        app.registerActivityLifecycleCallbacks(ActivityTracker)
     }
 
-    // This is required as some platforms expect ContextImpl
-    override fun getBaseContext(): Context {
-        return super.getBaseContext().unwrap()
+    override fun onCreate() {
+        super.onCreate()
+        RootRegistry.bindTask = RootService.createBindTask(
+            intent<RootRegistry>(),
+            UiThreadHandler.executor,
+            RootRegistry.Connection
+        )
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
-        resources.updateConfig(newConfig)
+        if (resources.configuration.diff(newConfig) != 0) {
+            resources.setConfig(newConfig)
+        }
         if (!isRunningAsStub)
             super.onConfigurationChanged(newConfig)
     }
 }
 
-object ForegroundTracker : Application.ActivityLifecycleCallbacks {
+@SuppressLint("StaticFieldLeak")
+object ActivityTracker : Application.ActivityLifecycleCallbacks {
 
     @Volatile
     var foreground: Activity? = null

@@ -36,10 +36,9 @@ fun InputStream.unzip(folder: File, path: String, junkPath: Boolean) {
                 dest = SuFile(folder, name)
                 dest.parentFile!!.mkdirs()
             }
-            SuFileOutputStream(dest).use { out -> zin.copyTo(out) }
+            SuFileOutputStream.open(dest).use { out -> zin.copyTo(out) }
         }
-    } catch (e: IOException) {
-        e.printStackTrace()
-        throw e
+    } catch (e: IllegalArgumentException) {
+        throw IOException(e)
     }
 }

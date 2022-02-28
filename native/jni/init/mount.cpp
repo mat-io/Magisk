@@ -10,13 +10,6 @@
 
 using namespace std;
 
-static string rtrim(string &&str) {
-    // Trim space, newline, and null byte from end of string
-    while (memchr(" \n\r", str[str.length() - 1], 4))
-        str.pop_back();
-    return std::move(str);
-}
-
 struct devinfo {
     int major;
     int minor;
@@ -86,7 +79,7 @@ static int64_t setup_block(bool write_block) {
                 sprintf(blk_info.block_dev, "/dev/block/%s", dev.devname);
             }
             dev_t rdev = makedev(dev.major, dev.minor);
-            mknod(blk_info.block_dev, S_IFBLK | 0600, rdev);
+            xmknod(blk_info.block_dev, S_IFBLK | 0600, rdev);
             return rdev;
         }
         // Wait 10ms and try again
@@ -100,7 +93,7 @@ static int64_t setup_block(bool write_block) {
 }
 
 static bool is_lnk(const char *name) {
-    struct stat st;
+    struct stat st{};
     if (lstat(name, &st))
         return false;
     return S_ISLNK(st.st_mode);
@@ -112,12 +105,12 @@ if (access(#val, F_OK) == 0) {\
 }
 
 void BaseInit::read_dt_fstab(vector<fstab_entry> &fstab) {
-    if (access(cmd->dt_dir, F_OK) != 0)
+    if (access(config->dt_dir, F_OK) != 0)
         return;
 
     char cwd[128];
     getcwd(cwd, sizeof(cwd));
-    chdir(cmd->dt_dir);
+    chdir(config->dt_dir);
     run_finally cd([&]{ chdir(cwd); });
 
     if (access("fstab", F_OK) != 0)
@@ -165,12 +158,21 @@ void MagiskInit::mount_with_dt() {
     for (const auto &entry : fstab) {
         if (is_lnk(entry.mnt_point.data()))
             continue;
+        if (avd_hack && entry.mnt_point == "/system") {
+            // When we force AVD to disable SystemAsRoot, it will always add system
+            // to dt fstab. We actually already mounted it as root, so skip this one.
+            continue;
+        }
         // Derive partname from dev
-        sprintf(blk_info.partname, "%s%s", basename(entry.dev.data()), cmd->slot);
+        sprintf(blk_info.partname, "%s%s", basename(entry.dev.data()), config->slot);
         setup_block(true);
         xmkdir(entry.mnt_point.data(), 0755);
         xmount(blk_info.block_dev, entry.mnt_point.data(), entry.type.data(), MS_RDONLY, nullptr);
-        mount_list.push_back(entry.mnt_point);
+        if (!avd_hack) {
+            // When avd_hack is true, do not add any early mount partitions to mount_list
+            // as we will actually forcefully disable original init's early mount
+            mount_list.push_back(entry.mnt_point);
+        }
     }
 }
 
@@ -192,7 +194,7 @@ static void switch_root(const string &path) {
     });
     for (auto &dir : mounts) {
         auto new_path = path + dir;
-        mkdir(new_path.data(), 0755);
+        xmkdir(new_path.data(), 0755);
         xmount(dir.data(), new_path.data(), nullptr, MS_MOVE, nullptr);
     }
     chdir(path.data());
@@ -201,6 +203,27 @@ static void switch_root(const string &path) {
 
     LOGD("Cleaning rootfs\n");
     frm_rf(root);
+}
+
+bool is_dsu() {
+    strcpy(blk_info.partname, "metadata");
+    xmkdir("/metadata", 0755);
+    if (setup_block(true) < 0 ||
+        xmount(blk_info.block_dev, "/metadata", "ext4", MS_RDONLY, nullptr)) {
+        PLOGE("Failed to mount /metadata");
+        return false;
+    } else {
+        run_finally f([]{ xumount2("/metadata", MNT_DETACH); });
+        constexpr auto dsu_status = "/metadata/gsi/dsu/install_status";
+        if (xaccess(dsu_status, F_OK) == 0) {
+            char status[PATH_MAX] = {0};
+            auto fp = xopen_file(dsu_status, "r");
+            fgets(status, sizeof(status), fp.get());
+            if (status == "ok"sv || status == "0"sv)
+                return true;
+        }
+    }
+    return false;
 }
 
 void MagiskInit::mount_rules_dir(const char *dev_base, const char *mnt_base) {
@@ -234,16 +257,20 @@ void MagiskInit::mount_rules_dir(const char *dev_base, const char *mnt_base) {
         goto cache;
 
     strcpy(p, "/data/unencrypted");
-    if (access(path, F_OK) == 0) {
+    if (xaccess(path, F_OK) == 0) {
         // FBE, need to use an unencrypted path
         custom_rules_dir = path + "/magisk"s;
     } else {
         // Skip if /data/adb does not exist
-        strcpy(p, "/data/adb");
-        if (access(path, F_OK) != 0)
+        strcpy(p, SECURE_DIR);
+        if (xaccess(path, F_OK) != 0)
             return;
+        strcpy(p, MODULEROOT);
+        if (xaccess(path, F_OK) != 0) {
+            goto cache;
+        }
         // Unencrypted, directly use module paths
-        custom_rules_dir = string(mnt_base) + MODULEROOT;
+        custom_rules_dir = string(path);
     }
     goto success;
 
@@ -289,10 +316,10 @@ success:
 }
 
 void RootFSInit::early_mount() {
-    self = mmap_data::ro("/init");
+    self = mmap_data("/init");
 
     LOGD("Restoring /init\n");
-    rename("/.backup/init", "/init");
+    rename(backup_init(), "/init");
 
     mount_with_dt();
 }
@@ -301,9 +328,9 @@ void SARBase::backup_files() {
     if (access("/overlay.d", F_OK) == 0)
         backup_folder("/overlay.d", overlays);
 
-    self = mmap_data::ro("/proc/self/exe");
+    self = mmap_data("/proc/self/exe");
     if (access("/.backup/.magisk", R_OK) == 0)
-        config = mmap_data::ro("/.backup/.magisk");
+        magisk_config = mmap_data("/.backup/.magisk");
 }
 
 void SARBase::mount_system_root() {
@@ -323,13 +350,13 @@ void SARBase::mount_system_root() {
         if (dev >= 0)
             goto mount_root;
 
-        sprintf(blk_info.partname, "system%s", cmd->slot);
+        sprintf(blk_info.partname, "system%s", config->slot);
         dev = setup_block(false);
         if (dev >= 0)
             goto mount_root;
 
         // Poll forever if rootwait was given in cmdline
-    } while (cmd->rootwait);
+    } while (config->rootwait);
 
     // We don't really know what to do at this point...
     LOGE("Cannot find root partition, abort\n");
@@ -354,35 +381,41 @@ void SARInit::early_mount() {
         xmkdir("/dev", 0755);
         xmount("tmpfs", "/dev", "tmpfs", 0, "mode=755");
         mount_list.emplace_back("/dev");
+#if ENABLE_AVD_HACK
+        avd_hack = config->emulator;
+#endif
         mount_with_dt();
     }
 }
 
-void SecondStageInit::prepare() {
+bool SecondStageInit::prepare() {
     backup_files();
 
     umount2("/init", MNT_DETACH);
     umount2("/proc/self/exe", MNT_DETACH);
 
-    if (access("/system_root", F_OK) == 0)
-        switch_root("/system_root");
+    // some weird devices, like meizu, embrace two stage init but still have legacy rootfs behaviour
+    bool legacy = false;
+    if (access("/system_root", F_OK) == 0) {
+        if (access("/system_root/proc", F_OK) == 0) {
+            switch_root("/system_root");
+        } else {
+            xmount("/system_root", "/system", nullptr, MS_MOVE, nullptr);
+            rmdir("/system_root");
+            legacy = true;
+        }
+    }
+    return legacy;
 }
 
 void BaseInit::exec_init() {
     // Unmount in reverse order
     for (auto &p : reversed(mount_list)) {
-        if (xumount(p.data()) == 0)
+        if (xumount2(p.data(), MNT_DETACH) == 0)
             LOGD("Unmount [%s]\n", p.data());
     }
     execv("/init", argv);
     exit(1);
-}
-
-static void patch_socket_name(const char *path) {
-    char rstr[16];
-    gen_rand_str(rstr, sizeof(rstr));
-    auto bin = mmap_data::rw(path);
-    bin.patch({ make_pair(MAIN_SOCKET, rstr) });
 }
 
 void MagiskInit::setup_tmp(const char *path) {
@@ -396,13 +429,13 @@ void MagiskInit::setup_tmp(const char *path) {
     xmkdir(BLOCKDIR, 0);
 
     int fd = xopen(INTLROOT "/config", O_WRONLY | O_CREAT, 0);
-    xwrite(fd, config.buf, config.sz);
+    xwrite(fd, magisk_config.buf, magisk_config.sz);
     close(fd);
     fd = xopen("magiskinit", O_WRONLY | O_CREAT, 0755);
     xwrite(fd, self.buf, self.sz);
     close(fd);
-    dump_magisk("magisk", 0755);
-    patch_socket_name("magisk");
+
+    // The magisk binary will be handled later
 
     // Create applet symlinks
     for (int i = 0; applet_names[i]; ++i)

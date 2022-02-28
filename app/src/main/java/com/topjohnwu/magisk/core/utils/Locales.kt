@@ -3,20 +3,15 @@
 package com.topjohnwu.magisk.core.utils
 
 import android.annotation.SuppressLint
-import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.Resources
-import android.util.DisplayMetrics
 import com.topjohnwu.magisk.R
 import com.topjohnwu.magisk.core.Config
-import com.topjohnwu.magisk.core.ResMgr
-import com.topjohnwu.magisk.core.addAssetPath
-import com.topjohnwu.magisk.ktx.langTagToLocale
-import com.topjohnwu.magisk.ktx.toLangTag
+import com.topjohnwu.magisk.core.createNewResources
+import com.topjohnwu.magisk.di.AppContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.*
-import kotlin.Comparator
 import kotlin.collections.ArrayList
 
 var currentLocale: Locale = Locale.getDefault()
@@ -30,11 +25,8 @@ suspend fun availableLocales() = cachedLocales ?:
 withContext(Dispatchers.Default) {
     val compareId = R.string.app_changelog
 
-    // Create a completely new resource to prevent cross talk over app's configs
-    val asset = AssetManager::class.java.newInstance().apply { addAssetPath(ResMgr.apk) }
-    val config = Configuration(ResMgr.resource.configuration)
-    val metrics = DisplayMetrics().apply { setTo(ResMgr.resource.displayMetrics) }
-    val res = Resources(asset, metrics, config)
+    // Create a completely new resource to prevent cross talk over active configs
+    val res = createNewResources()
 
     val locales = ArrayList<String>().apply {
         // Add default locale
@@ -45,19 +37,17 @@ withContext(Dispatchers.Default) {
         add("pt-BR")
 
         // Then add all supported locales
-        addAll(res.assets.locales)
+        addAll(Resources.getSystem().assets.locales)
     }.map {
-        it.langTagToLocale()
+        Locale.forLanguageTag(it)
     }.distinctBy {
-        config.setLocale(it)
-        res.updateConfiguration(config, metrics)
+        res.setLocale(it)
         res.getString(compareId)
-    }.sortedWith(Comparator { a, b ->
+    }.sortedWith { a, b ->
         a.getDisplayName(a).compareTo(b.getDisplayName(b), true)
-    })
+    }
 
-    config.setLocale(defaultLocale)
-    res.updateConfiguration(config, metrics)
+    res.setLocale(defaultLocale)
     val defName = res.getString(R.string.system_default)
 
     val names = ArrayList<String>(locales.size + 1)
@@ -68,23 +58,30 @@ withContext(Dispatchers.Default) {
 
     locales.forEach { locale ->
         names.add(locale.getDisplayName(locale))
-        values.add(locale.toLangTag())
+        values.add(locale.toLanguageTag())
     }
 
     (names.toTypedArray() to values.toTypedArray()).also { cachedLocales = it }
 }
 
-fun Resources.updateConfig(config: Configuration = configuration) {
+fun Resources.setConfig(config: Configuration) {
     config.setLocale(currentLocale)
     updateConfiguration(config, displayMetrics)
+}
+
+fun Resources.syncLocale() = setConfig(configuration)
+
+fun Resources.setLocale(locale: Locale) {
+    configuration.setLocale(locale)
+    updateConfiguration(configuration, displayMetrics)
 }
 
 fun refreshLocale() {
     val localeConfig = Config.locale
     currentLocale = when {
         localeConfig.isEmpty() -> defaultLocale
-        else -> localeConfig.langTagToLocale()
+        else -> Locale.forLanguageTag(localeConfig)
     }
     Locale.setDefault(currentLocale)
-    ResMgr.resource.updateConfig()
+    AppContext.resources.syncLocale()
 }

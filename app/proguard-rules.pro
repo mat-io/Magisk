@@ -16,36 +16,44 @@
 #   public *;
 #}
 
-# Kotlin
--assumenosideeffects class kotlin.jvm.internal.Intrinsics {
-	public static void checkExpressionValueIsNotNull(...);
-	public static void checkNotNullExpressionValue(...);
-	public static void checkReturnedValueIsNotNull(...);
-	public static void checkFieldIsNotNull(...);
-	public static void checkParameterIsNotNull(...);
+# Parcelable
+-keepclassmembers class * implements android.os.Parcelable {
+    public static final ** CREATOR;
 }
 
-# Stubs
--keep class a.* { *; }
+# Kotlin
+-assumenosideeffects class kotlin.jvm.internal.Intrinsics {
+	public static void check*(...);
+	public static void throw*(...);
+}
 
-# Snet
--keepclassmembers class com.topjohnwu.magisk.ui.safetynet.SafetyNetHelper { *; }
--keep,allowobfuscation interface com.topjohnwu.magisk.ui.safetynet.SafetyNetHelper$Callback
--keepclassmembers class * implements com.topjohnwu.magisk.ui.safetynet.SafetyNetHelper$Callback {
-  void onResponse(org.json.JSONObject);
+# Stub
+-keep class com.topjohnwu.magisk.core.App { <init>(java.lang.Object); }
+-keepclassmembers class androidx.appcompat.app.AppCompatDelegateImpl {
+  boolean mActivityHandlesUiModeChecked;
+  boolean mActivityHandlesUiMode;
 }
 
 # Strip Timber verbose and debug logging
--assumenosideeffects class timber.log.Timber.Tree {
+-assumenosideeffects class timber.log.Timber$Tree {
   public void v(**);
   public void d(**);
 }
 
 # Excessive obfuscation
--repackageclasses
+-repackageclasses 'a'
 -allowaccessmodification
 
-# QOL
--dontnote **
--dontwarn com.caverock.androidsvg.**
--dontwarn ru.noties.markwon.**
+-obfuscationdictionary ../dict.txt
+-classobfuscationdictionary ../dict.txt
+-packageobfuscationdictionary ../dict.txt
+
+-dontwarn org.bouncycastle.jsse.BCSSLParameters
+-dontwarn org.bouncycastle.jsse.BCSSLSocket
+-dontwarn org.bouncycastle.jsse.provider.BouncyCastleJsseProvider
+-dontwarn org.commonmark.ext.gfm.strikethrough.Strikethrough
+-dontwarn org.conscrypt.Conscrypt*
+-dontwarn org.conscrypt.ConscryptHostnameVerifier
+-dontwarn org.openjsse.javax.net.ssl.SSLParameters
+-dontwarn org.openjsse.javax.net.ssl.SSLSocket
+-dontwarn org.openjsse.net.ssl.OpenJSSE
