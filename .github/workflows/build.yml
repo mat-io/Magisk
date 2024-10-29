@@ -2,7 +2,7 @@ name: Magisk Build
 
 on:
   push:
-    branches: [master]
+    branches: [v28.0-safeboot-bypass-disabled]
     paths:
       - "app/**"
       - "native/**"
@@ -11,7 +11,7 @@ on:
       - "gradle.properties"
       - ".github/workflows/build.yml"
   pull_request:
-    branches: [master]
+    branches: [v28.0-safeboot-bypass-disabled]
   workflow_dispatch:
 
 jobs:
