@@ -141,7 +141,7 @@ static bool check_safe_mode() {
     // Increment the bootloop counter
     set_db_settings(BOOTLOOP_COUNT, bootloop_cnt + 1);
     return bootloop_cnt >= 2 || get_prop("persist.sys.safemode", true) == "1" ||
-           get_prop("ro.sys.safemode") == "1" || check_key_combo();
+           get_prop("ro.sys.safemode") == "1";
 }
 
 /***********************
